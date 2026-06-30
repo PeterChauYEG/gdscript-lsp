@@ -1,0 +1,111 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "GDScript",
+  "scopeName": "source.gdscript",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#annotations" },
+    { "include": "#keywords" },
+    { "include": "#builtin-types" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#node-paths" }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.number-sign.gdscript",
+      "match": "#.*$"
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.gdscript",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.gdscript", "match": "\\\\." }
+          ]
+        },
+        {
+          "name": "string.quoted.single.gdscript",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "name": "constant.character.escape.gdscript", "match": "\\\\." }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.gdscript",
+          "begin": "\"\"\"",
+          "end": "\"\"\""
+        }
+      ]
+    },
+    "annotations": {
+      "name": "storage.modifier.gdscript",
+      "match": "@[A-Za-z_]\\w*"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.gdscript",
+          "match": "\\b(if|elif|else|for|while|match|break|break_point|continue|return|pass|await)\\b"
+        },
+        {
+          "name": "keyword.declaration.gdscript",
+          "match": "\\b(func|var|const|enum|signal|class|class_name|extends|static)\\b"
+        },
+        {
+          "name": "keyword.operator.word.gdscript",
+          "match": "\\b(and|or|not|in|is|as)\\b"
+        }
+      ]
+    },
+    "builtin-types": {
+      "name": "storage.type.gdscript",
+      "match": "\\b(void|int|float|bool|String|StringName|NodePath|Vector2|Vector2i|Vector3|Vector3i|Vector4|Color|Rect2|Rect2i|Transform2D|Transform3D|Basis|Quaternion|Plane|AABB|Array|Dictionary|Object|Node|RefCounted|Resource|Callable|Signal|RID|Variant)\\b"
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "variable.language.gdscript",
+          "match": "\\b(self|super|null|true|false)\\b"
+        },
+        {
+          "name": "constant.language.gdscript",
+          "match": "\\b(PI|TAU|INF|NAN)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.gdscript",
+          "match": "\\b0x[0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.gdscript",
+          "match": "\\b0b[01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.gdscript",
+          "match": "\\b\\d[\\d_]*\\.\\d*([eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.gdscript",
+          "match": "\\b\\d[\\d_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "name": "keyword.operator.gdscript",
+      "match": "->|:=|\\*\\*=?|//=?|[+\\-*/%&|^~<>!]=?|&&|\\|\\|"
+    },
+    "node-paths": {
+      "name": "string.interpolated.gdscript",
+      "match": "\\$[A-Za-z_/][A-Za-z0-9_/]*"
+    }
+  }
+}

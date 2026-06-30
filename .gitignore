@@ -2,3 +2,8 @@
 .claude/settings.local.json
 .env
 *.env.local
+
+# VSCode extension
+editors/vscode/node_modules/
+editors/vscode/out/
+*.vsix

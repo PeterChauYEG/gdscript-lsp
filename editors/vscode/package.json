@@ -1,0 +1,74 @@
+{
+  "name": "gdscript-lsp",
+  "displayName": "GDScript LSP",
+  "description": "Standalone GDScript language server — diagnostics, hover, completions, and go-to-definition without a running Godot instance",
+  "version": "0.1.0",
+  "publisher": "PeterChauYEG",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PeterChauYEG/gdscript-lsp"
+  },
+  "categories": ["Programming Languages", "Linters"],
+  "keywords": ["godot", "gdscript", "lsp", "language-server"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": ["workspaceContains:**/*.gd"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "gdscript",
+        "aliases": ["GDScript", "gdscript"],
+        "extensions": [".gd"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gdscript",
+        "scopeName": "source.gdscript",
+        "path": "./syntaxes/gdscript.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "gdscript-lsp.restart",
+        "title": "GDScript LSP: Restart Server"
+      }
+    ],
+    "configuration": {
+      "title": "GDScript LSP",
+      "properties": {
+        "gdscript-lsp.serverPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `gdscript-lsp` binary. Leave empty to search common locations and `$PATH`."
+        },
+        "gdscript-lsp.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP communication between VSCode and the server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production && vsce package --no-dependencies",
+    "vscode:prepublish": "node esbuild.js --production"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.3.0"
+  }
+}
