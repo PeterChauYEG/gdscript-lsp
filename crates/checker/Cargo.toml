@@ -13,5 +13,6 @@ gdscript-core = { path = "../core" }
 gdscript-parser = { path = "../parser" }
 gdscript-api-db = { path = "../api-db" }
 gdscript-indexer = { path = "../indexer" }
+tree-sitter = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

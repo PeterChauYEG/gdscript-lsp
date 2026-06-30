@@ -10,7 +10,10 @@ use tower_lsp::lsp_types::{
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
-use crate::{capabilities::server_capabilities, document_store::DocumentStore};
+use crate::{
+    capabilities::server_capabilities, diagnostics::publish_syntax_diagnostics,
+    document_store::DocumentStore,
+};
 
 pub struct Backend {
     client: Client,
@@ -69,20 +72,44 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let mut store = self.documents.write().await;
-        store.open(params.text_document.uri, params.text_document.text);
+        let uri = params.text_document.uri.clone();
+        let version = params.text_document.version;
+        let text = params.text_document.text.clone();
+
+        self.documents
+            .write()
+            .await
+            .open(uri.clone(), params.text_document.text);
+
+        publish_syntax_diagnostics(&self.client, uri, version, &text).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        if let Some(change) = params.content_changes.into_iter().last() {
-            let mut store = self.documents.write().await;
-            store.update(&params.text_document.uri, change.text);
-        }
+        let Some(change) = params.content_changes.into_iter().last() else {
+            return;
+        };
+
+        let uri = params.text_document.uri.clone();
+        let version = params.text_document.version;
+        let text = change.text.clone();
+
+        self.documents
+            .write()
+            .await
+            .update(&params.text_document.uri, change.text);
+
+        publish_syntax_diagnostics(&self.client, uri, version, &text).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let mut store = self.documents.write().await;
-        store.close(&params.text_document.uri);
+        // Clear diagnostics when the file is closed.
+        self.client
+            .publish_diagnostics(params.text_document.uri.clone(), vec![], None)
+            .await;
+        self.documents
+            .write()
+            .await
+            .close(&params.text_document.uri);
     }
 
     async fn did_save(&self, _params: DidSaveTextDocumentParams) {}

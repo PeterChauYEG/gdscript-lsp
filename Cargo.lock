@@ -362,6 +362,7 @@ dependencies = [
  "gdscript-parser",
  "thiserror",
  "tracing",
+ "tree-sitter",
 ]
 
 [[package]]
