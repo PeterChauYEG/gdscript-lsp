@@ -1,0 +1,142 @@
+name: Main CI
+
+run-name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: [self-hosted, catfood]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+  clippy:
+    name: clippy
+    runs-on: [self-hosted, catfood]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+
+  test:
+    name: test
+    runs-on: [self-hosted, catfood]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: cargo test
+        run: cargo test
+
+  release:
+    name: release (macos-x86_64)
+    runs-on: macos-13
+    needs: [fmt, clippy, test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        run: rustup update stable && rustup default stable
+
+      - name: Cache Cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build binary
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp target/x86_64-apple-darwin/release/gdscript-lsp dist/gdscript-lsp-macos-x86_64
+          chmod +x dist/gdscript-lsp-macos-x86_64
+
+      - name: Build VSCode extension
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          npm run package
+          cp gdscript-lsp-*.vsix ../../dist/
+
+      - name: Generate CalVer version
+        id: calver
+        run: |
+          YEAR=$(date +%y)
+          MONTH=$(date +%-m)
+          DAY=$(date +%-d)
+          BASE="${YEAR}.${MONTH}.${DAY}"
+
+          git fetch --tags
+          EXISTING=$(git tag -l "v${BASE}*" | sort -V | tail -1)
+
+          if [ -z "$EXISTING" ]; then
+            VERSION="${BASE}"
+          else
+            PATCH=$(echo "$EXISTING" | grep -oE '[0-9]+$' || echo "")
+            if [ -z "$PATCH" ]; then
+              VERSION="${BASE}.1"
+            else
+              VERSION="${BASE}.$((PATCH + 1))"
+            fi
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "Releasing ${VERSION}"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.calver.outputs.tag }}
+          name: ${{ steps.calver.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/gdscript-lsp-macos-x86_64
+            dist/*.vsix
+
+  slack-notification:
+    runs-on: [self-hosted, catfood]
+    if: always()
+    needs:
+      - release
+    steps:
+      - name: Post a message in a channel
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v2.1.1
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: "*Release result*: ${{ job.status }}\nRepository: ${{ github.repository }}\nBranch: main"
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*Release result*: ${{ job.status }}\nRepository: ${{ github.repository }}\nBranch: main"
