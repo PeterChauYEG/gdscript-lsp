@@ -3,5 +3,8 @@
 
 pub mod backend;
 pub mod capabilities;
+pub mod completion;
 pub mod diagnostics;
 pub mod document_store;
+pub mod hover;
+pub mod text_util;

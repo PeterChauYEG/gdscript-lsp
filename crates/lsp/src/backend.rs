@@ -11,8 +11,9 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
 use crate::{
-    capabilities::server_capabilities, diagnostics::publish_syntax_diagnostics,
-    document_store::DocumentStore,
+    capabilities::server_capabilities, completion::class_name_completions,
+    diagnostics::publish_syntax_diagnostics, document_store::DocumentStore, hover::hover_for_word,
+    text_util::word_at,
 };
 
 pub struct Backend {
@@ -114,14 +115,34 @@ impl LanguageServer for Backend {
 
     async fn did_save(&self, _params: DidSaveTextDocumentParams) {}
 
-    async fn hover(&self, _params: HoverParams) -> Result<Option<Hover>> {
-        // TODO(LAB-656): engine API hover docs
-        Ok(None)
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let pos = &params.text_document_position_params.position;
+        let uri = &params.text_document_position_params.text_document.uri;
+
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else {
+            return Ok(None);
+        };
+
+        let word = word_at(&source, pos.line, pos.character);
+        let Some(word) = word else {
+            return Ok(None);
+        };
+
+        let db = self.api_db.read().await;
+        let result = db.as_ref().and_then(|db| hover_for_word(word, db));
+        Ok(result)
     }
 
-    async fn completion(&self, _params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        // TODO(LAB-655): engine API completions
-        Ok(None)
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        // Skip member-access completions (after `.`) until type inference is implemented.
+        if params.context.and_then(|c| c.trigger_character).as_deref() == Some(".") {
+            return Ok(None);
+        }
+
+        let db = self.api_db.read().await;
+        let result = db.as_ref().map(class_name_completions);
+        Ok(result)
     }
 
     async fn goto_definition(
