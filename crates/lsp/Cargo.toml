@@ -14,6 +14,7 @@ gdscript-parser = { path = "../parser" }
 gdscript-api-db = { path = "../api-db" }
 gdscript-indexer = { path = "../indexer" }
 gdscript-checker = { path = "../checker" }
+tree-sitter = { workspace = true }
 tower-lsp = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }

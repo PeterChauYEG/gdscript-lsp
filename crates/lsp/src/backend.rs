@@ -12,8 +12,8 @@ use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
 use crate::{
     capabilities::server_capabilities, completion::class_name_completions,
-    diagnostics::publish_syntax_diagnostics, document_store::DocumentStore, hover::hover_for_word,
-    text_util::word_at,
+    diagnostics::publish_syntax_diagnostics, document_store::DocumentStore,
+    goto_def::find_definition, hover::hover_for_word, text_util::word_at,
 };
 
 pub struct Backend {
@@ -147,10 +147,27 @@ impl LanguageServer for Backend {
 
     async fn goto_definition(
         &self,
-        _params: GotoDefinitionParams,
+        params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        // TODO(LAB-660): go-to-definition
-        Ok(None)
+        let pos = &params.text_document_position_params.position;
+        let uri = &params.text_document_position_params.text_document.uri;
+
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else {
+            return Ok(None);
+        };
+
+        let word = word_at(&source, pos.line, pos.character);
+        let Some(word) = word else {
+            return Ok(None);
+        };
+
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else {
+            return Ok(None);
+        };
+
+        let location = find_definition(&doc, uri, word);
+        Ok(location.map(GotoDefinitionResponse::Scalar))
     }
 
     async fn references(&self, _params: ReferenceParams) -> Result<Option<Vec<Location>>> {
