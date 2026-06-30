@@ -16,6 +16,15 @@ pub struct ApiDb {
 }
 
 impl ApiDb {
+    /// Load the `extension_api.json` bundled at compile time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApiDbError::Parse`] if the bundled JSON is malformed (should never happen).
+    pub fn bundled() -> Result<Self, ApiDbError> {
+        Self::from_json(crate::BUNDLED_API)
+    }
+
     /// Parse an `extension_api.json` payload into the database.
     ///
     /// # Errors
@@ -63,5 +72,31 @@ impl ApiDb {
     #[must_use]
     pub fn is_subclass(&self, candidate: &str, base: &str) -> bool {
         self.inheritance_chain(candidate).contains(&base)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_api_parses() {
+        let db = ApiDb::bundled().expect("bundled extension_api.json must parse");
+        assert!(
+            db.class_names().count() > 1000,
+            "expected 1000+ engine classes"
+        );
+        assert!(db.get_class("Node").is_some(), "Node must exist");
+        assert!(db.get_class("Node2D").is_some(), "Node2D must exist");
+        assert!(db.is_subclass("Node2D", "Node"), "Node2D inherits Node");
+    }
+
+    #[test]
+    fn inheritance_chain_terminates() {
+        let db = ApiDb::bundled().unwrap();
+        let chain = db.inheritance_chain("Sprite2D");
+        assert!(chain.contains(&"Node2D"));
+        assert!(chain.contains(&"Node"));
+        assert!(chain.contains(&"Object"));
     }
 }

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use gdscript_api_db::ApiDb;
 use tokio::sync::RwLock;
 use tower_lsp::lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
@@ -14,6 +15,7 @@ use crate::{capabilities::server_capabilities, document_store::DocumentStore};
 pub struct Backend {
     client: Client,
     documents: Arc<RwLock<DocumentStore>>,
+    api_db: Arc<RwLock<Option<ApiDb>>>,
 }
 
 impl Backend {
@@ -22,6 +24,7 @@ impl Backend {
         Self {
             client,
             documents: Arc::new(RwLock::new(DocumentStore::default())),
+            api_db: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -39,9 +42,26 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: tower_lsp::lsp_types::InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "gdscript-lsp initialized")
-            .await;
+        match ApiDb::bundled() {
+            Ok(db) => {
+                let class_count = db.class_names().count();
+                *self.api_db.write().await = Some(db);
+                self.client
+                    .log_message(
+                        MessageType::INFO,
+                        format!("gdscript-lsp initialized ({class_count} engine classes loaded)"),
+                    )
+                    .await;
+            }
+            Err(e) => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("failed to load engine API database: {e}"),
+                    )
+                    .await;
+            }
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {

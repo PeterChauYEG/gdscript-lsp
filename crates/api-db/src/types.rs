@@ -69,9 +69,9 @@ pub struct SignalDef {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConstantDef {
     pub name: String,
-    #[serde(rename = "type")]
-    pub type_name: String,
-    pub value: String,
+    #[serde(rename = "type", default)]
+    pub type_name: Option<String>,
+    pub value: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
