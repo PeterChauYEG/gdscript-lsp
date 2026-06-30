@@ -11,6 +11,9 @@ concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
 
+env:
+  CARGO_HOME: /home/github-runner/cargo-cache
+
 permissions:
   contents: write
 

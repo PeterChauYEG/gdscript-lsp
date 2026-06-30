@@ -12,6 +12,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_HOME: /home/github-runner/cargo-cache
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
