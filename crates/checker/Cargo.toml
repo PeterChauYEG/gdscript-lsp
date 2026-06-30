@@ -1,0 +1,17 @@
+[package]
+name = "gdscript-checker"
+description = "Type checker and linter for GDScript"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gdscript-core = { path = "../core" }
+gdscript-parser = { path = "../parser" }
+gdscript-api-db = { path = "../api-db" }
+gdscript-indexer = { path = "../indexer" }
+thiserror = { workspace = true }
+tracing = { workspace = true }

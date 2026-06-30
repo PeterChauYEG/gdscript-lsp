@@ -1,0 +1,26 @@
+[package]
+name = "gdscript-lsp-bin"
+description = "gdscript-lsp — standalone GDScript Language Server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "gdscript-lsp"
+path = "src/main.rs"
+
+[dependencies]
+gdscript-lsp = { path = "../lsp" }
+gdscript-parser = { path = "../parser" }
+gdscript-api-db = { path = "../api-db" }
+gdscript-indexer = { path = "../indexer" }
+gdscript-checker = { path = "../checker" }
+tokio = { workspace = true }
+tower-lsp = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

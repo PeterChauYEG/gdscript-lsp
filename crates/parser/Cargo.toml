@@ -1,0 +1,15 @@
+[package]
+name = "gdscript-parser"
+description = "GDScript parser using tree-sitter-gdscript"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gdscript-core = { path = "../core" }
+tree-sitter = { workspace = true }
+tree-sitter-gdscript = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,22 @@
+[package]
+name = "gdscript-lsp"
+description = "LSP server implementation for GDScript"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gdscript-core = { path = "../core" }
+gdscript-parser = { path = "../parser" }
+gdscript-api-db = { path = "../api-db" }
+gdscript-indexer = { path = "../indexer" }
+gdscript-checker = { path = "../checker" }
+tower-lsp = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
