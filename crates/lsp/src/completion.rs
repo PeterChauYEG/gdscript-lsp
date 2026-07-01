@@ -146,3 +146,90 @@ pub fn node_member_completions(
     fake_map.types.insert(node_name.to_owned(), type_name.clone());
     member_completions(node_name, &fake_map, api_db)
 }
+
+#[cfg(test)]
+mod tests {
+    use gdscript_api_db::ApiDb;
+
+    use super::*;
+    use crate::type_resolver::TypeMap;
+
+    fn db() -> ApiDb { ApiDb::bundled().unwrap() }
+
+    fn item_labels(resp: Option<CompletionResponse>) -> Vec<String> {
+        match resp {
+            Some(CompletionResponse::Array(items)) => items.into_iter().map(|i| i.label).collect(),
+            _ => vec![],
+        }
+    }
+
+    #[test]
+    fn member_completions_shows_methods() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.types.insert("n".to_owned(), "Node2D".to_owned());
+        let labels = item_labels(member_completions("n", &map, &db));
+        assert!(labels.iter().any(|l| l == "add_child"));
+    }
+
+    #[test]
+    fn member_completions_includes_inherited() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.types.insert("n".to_owned(), "Node2D".to_owned());
+        let labels = item_labels(member_completions("n", &map, &db));
+        // Node2D inherits Node, which has add_child
+        assert!(labels.iter().any(|l| l == "add_child"));
+    }
+
+    #[test]
+    fn member_completions_unknown_receiver_returns_none() {
+        let db = db();
+        let map = TypeMap::default();
+        assert!(member_completions("totally_unknown", &map, &db).is_none());
+    }
+
+    #[test]
+    fn class_name_completions_includes_node2d() {
+        let db = db();
+        let labels = item_labels(Some(class_name_completions(&db)));
+        assert!(labels.iter().any(|l| l == "Node2D"));
+    }
+
+    #[test]
+    fn node_name_completions_shows_all_nodes() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
+        map.insert("HUD".to_owned(), "CanvasLayer".to_owned());
+        let labels = item_labels(Some(node_name_completions(&map)));
+        assert!(labels.contains(&"Sprite2D".to_owned()));
+        assert!(labels.contains(&"HUD".to_owned()));
+    }
+
+    #[test]
+    fn node_member_completions_resolves_type() {
+        let db = db();
+        let mut scene = std::collections::HashMap::new();
+        scene.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
+        let labels = item_labels(node_member_completions("Sprite2D", &scene, &db));
+        // Sprite2D has position (inherited from Node2D)
+        assert!(labels.iter().any(|l| l == "position" || l == "add_child"));
+    }
+
+    #[test]
+    fn node_member_completions_unknown_node_returns_none() {
+        let db = db();
+        let scene = std::collections::HashMap::new();
+        assert!(node_member_completions("NonExistent", &scene, &db).is_none());
+    }
+
+    #[test]
+    fn node_member_completions_last_path_component() {
+        let db = db();
+        let mut scene = std::collections::HashMap::new();
+        // Stores short name; path "UI/Health" → "Health"
+        scene.insert("Health".to_owned(), "ProgressBar".to_owned());
+        let labels = item_labels(node_member_completions("UI/Health", &scene, &db));
+        assert!(!labels.is_empty());
+    }
+}

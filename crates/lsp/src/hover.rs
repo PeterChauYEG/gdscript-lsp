@@ -163,3 +163,75 @@ fn find_word_start(line: &str, char_pos: usize) -> usize {
     // Convert char index to byte offset.
     chars[..start].iter().collect::<String>().len()
 }
+
+#[cfg(test)]
+mod tests {
+    use gdscript_api_db::ApiDb;
+
+    use super::*;
+    use crate::type_resolver::TypeMap;
+
+    fn db() -> ApiDb { ApiDb::bundled().unwrap() }
+    fn empty_map() -> TypeMap { TypeMap::default() }
+
+    fn hover_text(word: &str, line: &str, char_pos: usize, map: &TypeMap, db: &ApiDb) -> String {
+        let h = hover_at(word, line, char_pos, map, db).unwrap();
+        match h.contents {
+            HoverContents::Markup(m) => m.value,
+            _ => String::new(),
+        }
+    }
+
+    #[test]
+    fn class_hover_shows_name() {
+        let db = db();
+        let text = hover_text("Node2D", "Node2D", 3, &empty_map(), &db);
+        assert!(text.contains("Node2D"));
+    }
+
+    #[test]
+    fn class_hover_shows_inheritance() {
+        let db = db();
+        let text = hover_text("Node2D", "Node2D", 3, &empty_map(), &db);
+        assert!(text.contains("Node"));
+    }
+
+    #[test]
+    fn method_hover_on_receiver() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.types.insert("n".to_owned(), "Node2D".to_owned());
+        let line = "n.add_child(x)";
+        // char_pos points into "add_child"
+        let text = hover_text("add_child", line, 6, &map, &db);
+        assert!(text.contains("add_child"));
+        assert!(text.contains("func"));
+    }
+
+    #[test]
+    fn property_hover_on_receiver() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.types.insert("n".to_owned(), "Node2D".to_owned());
+        let line = "n.position";
+        let text = hover_text("position", line, 3, &map, &db);
+        assert!(text.contains("position"));
+    }
+
+    #[test]
+    fn bare_method_hover_uses_self_type() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.self_type = Some("Node2D".to_owned());
+        let line = "add_child(x)";
+        let text = hover_text("add_child", line, 3, &map, &db);
+        assert!(text.contains("add_child"));
+    }
+
+    #[test]
+    fn unknown_word_returns_none() {
+        let db = db();
+        let result = hover_at("totally_unknown_xyz", "totally_unknown_xyz", 5, &empty_map(), &db);
+        assert!(result.is_none());
+    }
+}

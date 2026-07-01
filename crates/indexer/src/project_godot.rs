@@ -76,3 +76,61 @@ fn extract_version(line: &str) -> Option<String> {
     let parts: Vec<&str> = version_str.split('.').take(2).collect();
     Some(parts.join("."))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = r#"[application]
+config/features=PackedStringArray("4.3", "Forward Plus")
+
+[autoload]
+GameManager="*res://autoloads/game_manager.gd"
+AudioBus="res://autoloads/audio_bus.gd"
+"#;
+
+    #[test]
+    fn parses_godot_version() {
+        let cfg = parse(SAMPLE);
+        assert_eq!(cfg.godot_version.as_deref(), Some("4.3"));
+    }
+
+    #[test]
+    fn parses_autoloads_with_singleton_marker() {
+        let cfg = parse(SAMPLE);
+        let gm = cfg.autoloads.iter().find(|(n, _)| n == "GameManager");
+        assert!(gm.is_some());
+        // Strips the leading `*`
+        assert_eq!(gm.unwrap().1, "res://autoloads/game_manager.gd");
+    }
+
+    #[test]
+    fn parses_autoloads_without_singleton_marker() {
+        let cfg = parse(SAMPLE);
+        let ab = cfg.autoloads.iter().find(|(n, _)| n == "AudioBus");
+        assert!(ab.is_some());
+        assert_eq!(ab.unwrap().1, "res://autoloads/audio_bus.gd");
+    }
+
+    #[test]
+    fn ignores_non_autoload_sections() {
+        let src = "[application]\nsome_key=\"value\"\n";
+        let cfg = parse(src);
+        assert!(cfg.autoloads.is_empty());
+    }
+
+    #[test]
+    fn version_minor_only() {
+        let src = "config/features=PackedStringArray(\"4.2.2\")\n";
+        let cfg = parse(src);
+        // Keeps only major.minor
+        assert_eq!(cfg.godot_version.as_deref(), Some("4.2"));
+    }
+
+    #[test]
+    fn empty_content_gives_defaults() {
+        let cfg = parse("");
+        assert!(cfg.autoloads.is_empty());
+        assert!(cfg.godot_version.is_none());
+    }
+}
