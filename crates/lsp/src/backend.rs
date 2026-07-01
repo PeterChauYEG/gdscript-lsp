@@ -7,21 +7,23 @@ use tower_lsp::lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentSymbolParams,
     DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    InitializeParams, InitializeResult, Location, MessageType, Position, Range, ReferenceParams,
-    ServerInfo, SignatureHelp, SignatureHelpParams, SymbolInformation, SymbolKind,
-    WorkspaceSymbolParams,
+    InitializeParams, InitializeResult, Location, MessageType, Position, PrepareRenameResponse,
+    Range, ReferenceParams, RenameParams, ServerInfo, SignatureHelp, SignatureHelpParams,
+    SymbolInformation, SymbolKind, TextEdit, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
 use crate::{
+    call_checker::check_calls,
     capabilities::server_capabilities,
     completion::{class_name_completions, member_completions},
-    diagnostics::publish_syntax_diagnostics,
+    diagnostics::publish_diagnostics,
     document_store::DocumentStore,
     goto_def::find_definition,
     hover::hover_at as hover_for_word,
     signature_help::signature_help_for_method,
     text_util::word_at,
+    type_check::check_type_mismatches,
     type_resolver::{TypeMap, extract_types},
 };
 
@@ -65,6 +67,24 @@ impl Backend {
             let map = extract_types(&doc);
             self.type_maps.write().await.insert(uri.clone(), map);
         }
+    }
+
+    async fn run_call_checker(
+        &self,
+        uri: &tower_lsp::lsp_types::Url,
+        source: &str,
+    ) -> Vec<tower_lsp::lsp_types::Diagnostic> {
+        let Ok(doc) = gdscript_parser::parse::parse(source) else {
+            return vec![];
+        };
+        let db = self.api_db.read().await;
+        let Some(db) = db.as_ref() else { return vec![] };
+        let type_maps = self.type_maps.read().await;
+        let empty = TypeMap::default();
+        let type_map = type_maps.get(uri).unwrap_or(&empty);
+        let mut diags = check_calls(&doc, type_map, db);
+        diags.extend(check_type_mismatches(&doc, db));
+        diags
     }
 }
 
@@ -164,7 +184,8 @@ impl LanguageServer for Backend {
             .open(uri.clone(), params.text_document.text);
 
         self.update_type_map(&uri, &text).await;
-        publish_syntax_diagnostics(&self.client, uri, version, &text).await;
+        let call_diags = self.run_call_checker(&uri, &text).await;
+        publish_diagnostics(&self.client, uri, version, &text, call_diags).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -182,7 +203,8 @@ impl LanguageServer for Backend {
             .update(&params.text_document.uri, change.text);
 
         self.update_type_map(&uri, &text).await;
-        publish_syntax_diagnostics(&self.client, uri, version, &text).await;
+        let call_diags = self.run_call_checker(&uri, &text).await;
+        publish_diagnostics(&self.client, uri, version, &text, call_diags).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -508,6 +530,117 @@ impl LanguageServer for Backend {
         }
 
         Ok(if locations.is_empty() { None } else { Some(locations) })
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: tower_lsp::lsp_types::TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let uri = &params.text_document.uri;
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let Some(word) = word_at(&source, params.position.line, params.position.character) else {
+            return Ok(None);
+        };
+
+        // Refuse to rename engine built-ins.
+        let db = self.api_db.read().await;
+        if let Some(db) = db.as_ref() {
+            if db.get_class(word).is_some() {
+                return Ok(None);
+            }
+        }
+
+        // Find the byte range of the word on that line.
+        let line_text = source
+            .lines()
+            .nth(params.position.line as usize)
+            .unwrap_or("");
+        let col = params.position.character as usize;
+        // Walk backwards from col to find where the word starts.
+        let prefix: String = line_text.chars().take(col + 1).collect();
+        let start_char = prefix
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !c.is_alphanumeric() && *c != '_')
+            .map_or(0, |(i, c)| i + c.len_utf8());
+        let end_char = start_char + word.len();
+
+        Ok(Some(PrepareRenameResponse::Range(Range {
+            start: Position { line: params.position.line, character: start_char as u32 },
+            end: Position { line: params.position.line, character: end_char as u32 },
+        })))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let pos = &params.text_document_position.position;
+        let new_name = &params.new_name;
+
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let Some(word) = word_at(&source, pos.line, pos.character) else {
+            return Ok(None);
+        };
+        let word = word.to_owned();
+
+        let index = self.project_index.read().await;
+        let paths: Vec<std::path::PathBuf> = index.file_symbols.keys().cloned().collect();
+        drop(index);
+
+        let mut changes: std::collections::HashMap<
+            tower_lsp::lsp_types::Url,
+            Vec<TextEdit>,
+        > = std::collections::HashMap::new();
+
+        for path in paths {
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let Ok(file_uri) = tower_lsp::lsp_types::Url::from_file_path(&path) else { continue };
+
+            let mut edits: Vec<TextEdit> = Vec::new();
+            for (line_num, line_text) in text.lines().enumerate() {
+                let mut search = line_text;
+                let mut col_offset = 0usize;
+                while let Some(pos) = search.find(word.as_str()) {
+                    let abs = col_offset + pos;
+                    let before_ok = abs == 0
+                        || !line_text.as_bytes()[abs - 1].is_ascii_alphanumeric()
+                            && line_text.as_bytes()[abs - 1] != b'_';
+                    let after = abs + word.len();
+                    let after_ok = after >= line_text.len()
+                        || !line_text.as_bytes()[after].is_ascii_alphanumeric()
+                            && line_text.as_bytes()[after] != b'_';
+
+                    if before_ok && after_ok {
+                        edits.push(TextEdit {
+                            range: Range {
+                                start: Position { line: line_num as u32, character: abs as u32 },
+                                end: Position { line: line_num as u32, character: (abs + word.len()) as u32 },
+                            },
+                            new_text: new_name.clone(),
+                        });
+                    }
+
+                    col_offset += pos + 1;
+                    search = &search[pos + 1..];
+                }
+            }
+
+            if !edits.is_empty() {
+                changes.insert(file_uri, edits);
+            }
+        }
+
+        if changes.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..Default::default()
+        }))
     }
 }
 

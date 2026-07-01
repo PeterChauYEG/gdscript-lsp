@@ -30,9 +30,14 @@ pub fn extract_types(doc: &ParsedDocument) -> TypeMap {
         let Some(node) = root.child(i) else { continue };
         match node.kind() {
             "extends_statement" => {
-                if let Some(type_node) = node.child_by_field_name("type") {
-                    if let Some(name) = type_ident(&type_node, source) {
-                        map.self_type = Some(name.to_owned());
+                // The type node is the first named child (no field name in the grammar).
+                for i in 0..node.child_count() {
+                    let Some(child) = node.child(i) else { continue };
+                    if child.kind() == "type" {
+                        if let Some(name) = type_ident(&child, source) {
+                            map.self_type = Some(name.to_owned());
+                        }
+                        break;
                     }
                 }
             }
@@ -109,4 +114,51 @@ fn type_ident<'a>(type_node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use gdscript_parser::parse::parse;
+    use super::*;
+
+    fn types(src: &str) -> TypeMap {
+        let doc = parse(src).unwrap();
+        extract_types(&doc)
+    }
+
+    #[test]
+    fn extracts_self_type_from_extends() {
+        let map = types("extends Node2D\n");
+        assert_eq!(map.self_type.as_deref(), Some("Node2D"));
+    }
+
+    #[test]
+    fn extracts_variable_annotation() {
+        let map = types("extends Node\nvar target: Node2D\n");
+        assert_eq!(map.resolve("target"), Some("Node2D"));
+    }
+
+    #[test]
+    fn extracts_function_parameter_annotation() {
+        let map = types("extends Node\nfunc foo(x: Sprite2D) -> void:\n\tpass\n");
+        assert_eq!(map.resolve("x"), Some("Sprite2D"));
+    }
+
+    #[test]
+    fn resolves_self_keyword() {
+        let map = types("extends RigidBody2D\n");
+        assert_eq!(map.resolve("self"), Some("RigidBody2D"));
+    }
+
+    #[test]
+    fn unannotated_var_is_absent() {
+        let map = types("extends Node\nvar x = 42\n");
+        assert!(map.resolve("x").is_none());
+    }
+
+    #[test]
+    fn extracts_local_var_in_function() {
+        let map = types("extends Node\nfunc _ready():\n\tvar label: Label\n");
+        assert_eq!(map.resolve("label"), Some("Label"));
+    }
 }

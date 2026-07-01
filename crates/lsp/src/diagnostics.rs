@@ -3,23 +3,25 @@ use gdscript_parser::parse::parse;
 use tower_lsp::Client;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
 
-/// Parse `source`, extract tree-sitter syntax errors, and publish them to the editor.
-pub async fn publish_syntax_diagnostics(client: &Client, uri: Url, version: i32, source: &str) {
-    let diags = match parse(source) {
+/// Parse `source`, extract syntax errors + any extra diagnostics, and publish.
+pub async fn publish_diagnostics(
+    client: &Client,
+    uri: Url,
+    version: i32,
+    source: &str,
+    extra: Vec<Diagnostic>,
+) {
+    let mut diags: Vec<Diagnostic> = match parse(source) {
         Ok(doc) => {
             let errors = gdscript_checker::syntax::syntax_errors(&doc);
+            let warnings = gdscript_checker::linting::lint(&doc);
             errors
                 .into_iter()
+                .chain(warnings)
                 .map(|d| Diagnostic {
                     range: Range {
-                        start: Position {
-                            line: d.line,
-                            character: d.col,
-                        },
-                        end: Position {
-                            line: d.end_line,
-                            character: d.end_col,
-                        },
+                        start: Position { line: d.line, character: d.col },
+                        end: Position { line: d.end_line, character: d.end_col },
                     },
                     severity: Some(match d.severity {
                         Severity::Error => DiagnosticSeverity::ERROR,
@@ -36,5 +38,6 @@ pub async fn publish_syntax_diagnostics(client: &Client, uri: Url, version: i32,
         Err(_) => vec![],
     };
 
+    diags.extend(extra);
     client.publish_diagnostics(uri, diags, Some(version)).await;
 }
