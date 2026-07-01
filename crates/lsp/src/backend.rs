@@ -4,8 +4,9 @@ use gdscript_api_db::ApiDb;
 use gdscript_indexer::{ProjectIndex, index::index_workspace};
 use tokio::sync::RwLock;
 use tower_lsp::lsp_types::{
-    CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentSymbolParams,
+    CodeActionOrCommand, CodeActionParams, CompletionParams, CompletionResponse, Diagnostic,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbolParams,
     DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
     DidChangeWatchedFilesParams, FileSystemWatcher, GlobPattern, InitializeParams, InitializeResult,
     InlayHint, InlayHintParams, Location, MessageType, Position, PrepareRenameResponse, Range,
@@ -17,9 +18,11 @@ use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 use crate::{
     call_checker::check_calls,
     capabilities::server_capabilities,
+    code_actions::code_actions_for,
     completion::{class_name_completions, member_completions, node_member_completions, node_name_completions},
     diagnostics::publish_diagnostics,
     document_store::DocumentStore,
+    formatting::format_document,
     goto_def::find_definition,
     hover::hover_at as hover_for_word,
     inlay_hints::inlay_hints,
@@ -607,6 +610,32 @@ impl LanguageServer for Backend {
 
         let hints = inlay_hints(&doc, &params.range);
         Ok(if hints.is_empty() { None } else { Some(hints) })
+    }
+
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let gdformat_path = "gdformat";
+        let edits = format_document(&source, gdformat_path).await;
+        Ok(edits)
+    }
+
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> Result<Option<Vec<CodeActionOrCommand>>> {
+        let uri = &params.text_document.uri;
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let diags: Vec<Diagnostic> = params.context.diagnostics;
+        let actions = code_actions_for(uri, &source, &params.range, &diags);
+        Ok(if actions.is_empty() { None } else { Some(actions) })
     }
 
     async fn prepare_rename(
