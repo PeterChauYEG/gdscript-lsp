@@ -96,10 +96,13 @@ pub fn member_completions(
     Some(CompletionResponse::Array(items))
 }
 
-/// Build a flat list of all engine class names as completion items.
+/// Build a flat list of engine class names plus user-defined `class_name` declarations.
 #[must_use]
-pub fn class_name_completions(api_db: &ApiDb) -> CompletionResponse {
-    let items = api_db
+pub fn class_name_completions(
+    api_db: &ApiDb,
+    user_classes: &std::collections::HashMap<String, std::path::PathBuf>,
+) -> CompletionResponse {
+    let engine: Vec<CompletionItem> = api_db
         .class_names()
         .map(|name| CompletionItem {
             label: name.to_owned(),
@@ -109,7 +112,17 @@ pub fn class_name_completions(api_db: &ApiDb) -> CompletionResponse {
         })
         .collect();
 
-    CompletionResponse::Array(items)
+    let user: Vec<CompletionItem> = user_classes
+        .keys()
+        .map(|name| CompletionItem {
+            label: name.clone(),
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some("User class".to_owned()),
+            ..Default::default()
+        })
+        .collect();
+
+    CompletionResponse::Array(engine.into_iter().chain(user).collect())
 }
 
 /// Build completion items for `$` node path access — returns all node names
@@ -192,8 +205,19 @@ mod tests {
     #[test]
     fn class_name_completions_includes_node2d() {
         let db = db();
-        let labels = item_labels(Some(class_name_completions(&db)));
+        let empty = std::collections::HashMap::new();
+        let labels = item_labels(Some(class_name_completions(&db, &empty)));
         assert!(labels.iter().any(|l| l == "Node2D"));
+    }
+
+    #[test]
+    fn class_name_completions_includes_user_classes() {
+        let db = db();
+        let mut user = std::collections::HashMap::new();
+        user.insert("Player".to_owned(), std::path::PathBuf::from("/res/player.gd"));
+        let labels = item_labels(Some(class_name_completions(&db, &user)));
+        assert!(labels.iter().any(|l| l == "Player"));
+        assert!(labels.iter().any(|l| l == "Node2D")); // engine classes still present
     }
 
     #[test]

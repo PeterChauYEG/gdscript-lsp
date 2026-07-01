@@ -73,6 +73,12 @@ fn check_attribute_call(
         .or_else(|| api_db.get_class(receiver).map(|c| c.name.as_str()));
     let Some(type_name) = type_name else { return };
 
+    // Only check calls on known engine types — skip user-defined classes to
+    // avoid false positives (we don't have their method signatures).
+    if api_db.get_class(type_name).is_none() {
+        return;
+    }
+
     let mut method_name: Option<&str> = None;
     let mut args_node: Option<tree_sitter::Node> = None;
 

@@ -360,10 +360,27 @@ impl LanguageServer for Backend {
             let empty = TypeMap::default();
             let type_map = type_maps.get(uri).unwrap_or(&empty);
 
-            let result = if db.get_class(receiver).is_some() {
-                let mut fake_map = TypeMap::default();
-                fake_map.types.insert(receiver.to_owned(), receiver.to_owned());
-                member_completions(receiver, &fake_map, db)
+            // Resolve the receiver's type — check type map first, then direct
+            // engine class name, then project index class_names.
+            let index = self.project_index.read().await;
+            let resolved_type = type_map.resolve(receiver)
+                .map(str::to_owned)
+                .or_else(|| db.get_class(receiver).map(|c| c.name.clone()))
+                .or_else(|| {
+                    // receiver might itself be a class_name identifier
+                    index.class_names.contains_key(receiver).then(|| receiver.to_owned())
+                });
+
+            let result = if let Some(ref type_name) = resolved_type {
+                if db.get_class(type_name).is_some() {
+                    // Engine type — full member completions
+                    let mut fake_map = TypeMap::default();
+                    fake_map.types.insert(receiver.to_owned(), type_name.clone());
+                    member_completions(receiver, &fake_map, db)
+                } else {
+                    // User-defined type — show its file's symbols from project index
+                    user_class_completions(type_name, &index)
+                }
             } else {
                 member_completions(receiver, type_map, db)
             };
@@ -372,7 +389,8 @@ impl LanguageServer for Backend {
         }
 
         let db = self.api_db.read().await;
-        let result = db.as_ref().map(class_name_completions);
+        let index = self.project_index.read().await;
+        let result = db.as_ref().map(|db| class_name_completions(db, &index.class_names));
         Ok(result)
     }
 
@@ -747,6 +765,45 @@ impl LanguageServer for Backend {
             changes: Some(changes),
             ..Default::default()
         }))
+    }
+}
+
+/// Build completions for a user-defined class by looking up its symbols in
+/// the project index's `file_symbols` map.
+fn user_class_completions(
+    class_name: &str,
+    index: &gdscript_indexer::ProjectIndex,
+) -> Option<tower_lsp::lsp_types::CompletionResponse> {
+    use gdscript_core::symbol::SymbolKind;
+    use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse};
+
+    let path = index.class_names.get(class_name)?;
+    let symbols = index.file_symbols.get(path)?;
+
+    let items: Vec<CompletionItem> = symbols
+        .iter()
+        .map(|sym| {
+            let kind = match sym.kind {
+                SymbolKind::Function => CompletionItemKind::FUNCTION,
+                SymbolKind::Variable => CompletionItemKind::FIELD,
+                SymbolKind::Constant => CompletionItemKind::CONSTANT,
+                SymbolKind::Signal => CompletionItemKind::EVENT,
+                SymbolKind::Class => CompletionItemKind::CLASS,
+                SymbolKind::Enum | SymbolKind::EnumMember => CompletionItemKind::ENUM,
+            };
+            CompletionItem {
+                label: sym.name.clone(),
+                kind: Some(kind),
+                detail: sym.type_annotation.clone().or_else(|| Some(class_name.to_owned())),
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    if items.is_empty() {
+        None
+    } else {
+        Some(CompletionResponse::Array(items))
     }
 }
 
