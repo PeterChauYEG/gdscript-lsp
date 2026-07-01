@@ -7,17 +7,17 @@ use tower_lsp::lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentSymbolParams,
     DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location, MessageType,
-    Position, PrepareRenameResponse, Range, ReferenceParams, RenameParams, ServerInfo,
-    SignatureHelp, SignatureHelpParams, SymbolInformation, SymbolKind, TextEdit, WorkspaceEdit,
-    WorkspaceSymbolParams,
+    DidChangeWatchedFilesParams, FileSystemWatcher, GlobPattern, InitializeParams, InitializeResult,
+    InlayHint, InlayHintParams, Location, MessageType, Position, PrepareRenameResponse, Range,
+    ReferenceParams, Registration, RenameParams, ServerInfo, SignatureHelp, SignatureHelpParams,
+    SymbolInformation, SymbolKind, TextEdit, WatchKind, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
 use crate::{
     call_checker::check_calls,
     capabilities::server_capabilities,
-    completion::{class_name_completions, member_completions},
+    completion::{class_name_completions, member_completions, node_member_completions, node_name_completions},
     diagnostics::publish_diagnostics,
     document_store::DocumentStore,
     goto_def::find_definition,
@@ -167,8 +167,43 @@ impl LanguageServer for Backend {
                         )
                         .await;
                 }
+
+                // Ask the client to watch project files so we get notified
+                // via workspace/didChangeWatchedFiles.
+                let patterns = ["**/*.gd", "**/*.tscn", "**/project.godot"];
+                let watchers: Vec<FileSystemWatcher> = patterns
+                    .iter()
+                    .map(|glob| FileSystemWatcher {
+                        glob_pattern: GlobPattern::String((*glob).to_owned()),
+                        kind: Some(WatchKind::all()),
+                    })
+                    .collect();
+                let _ = client
+                    .register_capability(vec![Registration {
+                        id: "workspace/didChangeWatchedFiles".to_owned(),
+                        method: "workspace/didChangeWatchedFiles".to_owned(),
+                        register_options: serde_json::to_value(
+                            tower_lsp::lsp_types::DidChangeWatchedFilesRegistrationOptions {
+                                watchers,
+                            },
+                        )
+                        .ok(),
+                    }])
+                    .await;
             });
         }
+    }
+
+    async fn did_change_watched_files(&self, _params: DidChangeWatchedFilesParams) {
+        let root = self.workspace_root.read().await.clone();
+        let Some(root) = root else { return };
+
+        let index = self.project_index.clone();
+        tokio::spawn(async move {
+            if let Ok(new_index) = index_workspace(&root) {
+                *index.write().await = new_index;
+            }
+        });
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -261,40 +296,67 @@ impl LanguageServer for Backend {
         let uri = &params.text_document_position.text_document.uri;
         let pos = &params.text_document_position.position;
 
-        if trigger == Some(".") {
-            // Find the receiver — the word immediately before the `.`
-            let source = self.documents.read().await.get(uri).map(str::to_owned);
-            let Some(source) = source else {
-                return Ok(None);
-            };
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
 
+        let lines: Vec<&str> = source.lines().collect();
+        let line = lines.get(pos.line as usize).copied().unwrap_or("");
+        let char_pos = pos.character as usize;
+        let _before: String = line.chars().take(char_pos).collect();
+
+        // `$` trigger — show node names from the associated scene.
+        if trigger == Some("$") {
+            let script_path = uri.to_file_path().ok();
+            let index = self.project_index.read().await;
+            if let Some(script_path) = script_path {
+                if let Some(scene_map) = find_associated_scene(&script_path, &index) {
+                    return Ok(Some(node_name_completions(scene_map)));
+                }
+            }
+            return Ok(None);
+        }
+
+        if trigger == Some(".") {
             // Walk back on the current line to find the identifier before `.`
-            let lines: Vec<&str> = source.lines().collect();
-            let line = lines.get(pos.line as usize).copied().unwrap_or("");
-            // Use char-aware truncation to avoid slicing mid-UTF-8-sequence.
-            let char_pos = pos.character.saturating_sub(1) as usize;
-            let before_dot: String = line.chars().take(char_pos).collect();
+            let char_pos_before_dot = char_pos.saturating_sub(1);
+            let before_dot: String = line.chars().take(char_pos_before_dot).collect();
+
+            // Check for `$NodeName.` pattern.
+            if let Some(dollar_pos) = before_dot.rfind('$') {
+                let node_path: String = before_dot[dollar_pos + 1..]
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '/')
+                    .collect();
+                if !node_path.is_empty() {
+                    let script_path = uri.to_file_path().ok();
+                    let index = self.project_index.read().await;
+                    let db = self.api_db.read().await;
+                    if let (Some(script_path), Some(db)) = (script_path, db.as_ref()) {
+                        if let Some(scene_map) = find_associated_scene(&script_path, &index) {
+                            let result = node_member_completions(&node_path, scene_map, db);
+                            if result.is_some() {
+                                return Ok(result);
+                            }
+                        }
+                    }
+                }
+            }
+
             let receiver_owned = before_dot
                 .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
                 .next()
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned);
-            let receiver = receiver_owned.as_deref();
-
-            let Some(receiver) = receiver else {
+            let Some(receiver) = receiver_owned.as_deref() else {
                 return Ok(None);
             };
 
             let db = self.api_db.read().await;
-            let Some(db) = db.as_ref() else {
-                return Ok(None);
-            };
-
+            let Some(db) = db.as_ref() else { return Ok(None) };
             let type_maps = self.type_maps.read().await;
             let empty = TypeMap::default();
             let type_map = type_maps.get(uri).unwrap_or(&empty);
 
-            // Also handle direct class name access (e.g. `Node2D.`)
             let result = if db.get_class(receiver).is_some() {
                 let mut fake_map = TypeMap::default();
                 fake_map.types.insert(receiver.to_owned(), receiver.to_owned());
@@ -657,6 +719,18 @@ impl LanguageServer for Backend {
             ..Default::default()
         }))
     }
+}
+
+/// Find the scene node map associated with a `.gd` script by looking for a
+/// same-name `.tscn` file in the same directory (Godot's naming convention).
+fn find_associated_scene<'a>(
+    script_path: &std::path::Path,
+    index: &'a gdscript_indexer::ProjectIndex,
+) -> Option<&'a gdscript_indexer::scene::SceneNodeMap> {
+    let stem = script_path.file_stem()?.to_str()?;
+    let dir = script_path.parent()?;
+    let tscn = dir.join(format!("{stem}.tscn"));
+    index.scenes.get(&tscn)
 }
 
 /// Parse `receiver.method(` from a line prefix, returning `(receiver, method)`.

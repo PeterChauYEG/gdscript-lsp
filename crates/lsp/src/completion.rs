@@ -111,3 +111,38 @@ pub fn class_name_completions(api_db: &ApiDb) -> CompletionResponse {
 
     CompletionResponse::Array(items)
 }
+
+/// Build completion items for `$` node path access — returns all node names
+/// from the given scene map as completion items.
+#[must_use]
+pub fn node_name_completions(
+    scene_map: &std::collections::HashMap<String, String>,
+) -> CompletionResponse {
+    let items = scene_map
+        .iter()
+        .map(|(name, type_name)| CompletionItem {
+            label: name.clone(),
+            kind: Some(CompletionItemKind::VARIABLE),
+            detail: Some(format!("Node ({type_name})")),
+            insert_text: Some(name.clone()),
+            ..Default::default()
+        })
+        .collect();
+    CompletionResponse::Array(items)
+}
+
+/// Build member completions for a node accessed via `$NodeName.`, resolving
+/// the node type from `scene_map` and delegating to `member_completions`.
+#[must_use]
+pub fn node_member_completions(
+    node_name: &str,
+    scene_map: &std::collections::HashMap<String, String>,
+    api_db: &ApiDb,
+) -> Option<CompletionResponse> {
+    // Support simple paths: take the last component of `UI/HealthBar` → `HealthBar`.
+    let simple = node_name.split('/').next_back().unwrap_or(node_name);
+    let type_name = scene_map.get(simple)?;
+    let mut fake_map = TypeMap::default();
+    fake_map.types.insert(node_name.to_owned(), type_name.clone());
+    member_completions(node_name, &fake_map, api_db)
+}
