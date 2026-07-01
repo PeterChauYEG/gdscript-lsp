@@ -11,9 +11,6 @@ concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
 
-env:
-  CARGO_HOME: /home/github-runner/cargo-cache
-
 permissions:
   contents: write
 
@@ -21,6 +18,8 @@ jobs:
   fmt:
     name: fmt
     runs-on: [self-hosted, catfood]
+    env:
+      CARGO_HOME: /home/github-runner/cargo-cache
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -33,6 +32,8 @@ jobs:
   clippy:
     name: clippy
     runs-on: [self-hosted, catfood]
+    env:
+      CARGO_HOME: /home/github-runner/cargo-cache
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,6 +46,8 @@ jobs:
   test:
     name: test
     runs-on: [self-hosted, catfood]
+    env:
+      CARGO_HOME: /home/github-runner/cargo-cache
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
