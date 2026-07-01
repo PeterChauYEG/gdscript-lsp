@@ -387,7 +387,10 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tree-sitter",
+ "tree-sitter-gdscript",
  "url",
+ "walkdir",
 ]
 
 [[package]]

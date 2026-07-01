@@ -3,6 +3,7 @@ use std::path::Path;
 /// Parsed contents of a `project.godot` file.
 #[derive(Debug, Default)]
 pub struct ProjectConfig {
+    /// Autoload singletons: name → res:// path (without leading `*`)
     pub autoloads: Vec<(String, String)>,
     pub godot_version: Option<String>,
 }
@@ -10,12 +11,40 @@ pub struct ProjectConfig {
 /// Parse a `project.godot` file from its text content.
 #[must_use]
 pub fn parse(content: &str) -> ProjectConfig {
-    // TODO(LAB-662): implement INI-style parser for autoloads and version
-    let _ = content;
-    ProjectConfig::default()
+    let mut config = ProjectConfig::default();
+    let mut in_autoload = false;
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        if line.starts_with('[') && line.ends_with(']') {
+            in_autoload = line == "[autoload]";
+            continue;
+        }
+
+        if line.starts_with(';') || line.is_empty() {
+            continue;
+        }
+
+        // Extract Godot version from config/features=PackedStringArray("4.x")
+        if line.starts_with("config/features=") {
+            if let Some(ver) = extract_version(line) {
+                config.godot_version = Some(ver);
+            }
+            continue;
+        }
+
+        if in_autoload {
+            if let Some((name, path)) = parse_autoload_line(line) {
+                config.autoloads.push((name, path));
+            }
+        }
+    }
+
+    config
 }
 
-/// Find `project.godot` by walking up from the given directory.
+/// Find `project.godot` by walking up from `start`.
 #[must_use]
 pub fn find(start: &Path) -> Option<std::path::PathBuf> {
     let mut dir = start;
@@ -26,4 +55,24 @@ pub fn find(start: &Path) -> Option<std::path::PathBuf> {
         }
         dir = dir.parent()?;
     }
+}
+
+fn parse_autoload_line(line: &str) -> Option<(String, String)> {
+    let (name, value) = line.split_once('=')?;
+    let name = name.trim().to_owned();
+    // Value is a quoted string, possibly prefixed with `*` (singleton marker)
+    let value = value.trim().trim_matches('"');
+    let path = value.trim_start_matches('*').to_owned();
+    Some((name, path))
+}
+
+fn extract_version(line: &str) -> Option<String> {
+    // config/features=PackedStringArray("4.3", ...)
+    let start = line.find('"')? + 1;
+    let rest = &line[start..];
+    let end = rest.find('"')?;
+    let version_str = &rest[..end];
+    // Keep only major.minor
+    let parts: Vec<&str> = version_str.split('.').take(2).collect();
+    Some(parts.join("."))
 }

@@ -57,6 +57,9 @@ similar = "2"
 # URL handling
 url = "2"
 
+# directory traversal
+walkdir = "2"
+
 [profile.release]
 strip = true
 lto = true
