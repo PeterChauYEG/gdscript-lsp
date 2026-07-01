@@ -1,6 +1,7 @@
 use tower_lsp::lsp_types::{
-    CompletionOptions, HoverProviderCapability, OneOf, RenameOptions,
-    ServerCapabilities, SignatureHelpOptions, TextDocumentSyncCapability, TextDocumentSyncKind,
+    CompletionOptions, HoverProviderCapability, InlayHintOptions, InlayHintServerCapabilities,
+    OneOf, RenameOptions, ServerCapabilities, SignatureHelpOptions, TextDocumentSyncCapability,
+    TextDocumentSyncKind,
 };
 
 #[must_use]
@@ -24,6 +25,9 @@ pub fn server_capabilities() -> ServerCapabilities {
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+            InlayHintOptions { resolve_provider: Some(false), ..Default::default() },
+        ))),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),

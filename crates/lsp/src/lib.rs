@@ -9,6 +9,7 @@ pub mod diagnostics;
 pub mod document_store;
 pub mod goto_def;
 pub mod hover;
+pub mod inlay_hints;
 pub mod signature_help;
 pub mod text_util;
 pub mod type_check;

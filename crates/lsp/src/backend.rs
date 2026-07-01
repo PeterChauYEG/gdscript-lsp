@@ -7,9 +7,10 @@ use tower_lsp::lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentSymbolParams,
     DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    InitializeParams, InitializeResult, Location, MessageType, Position, PrepareRenameResponse,
-    Range, ReferenceParams, RenameParams, ServerInfo, SignatureHelp, SignatureHelpParams,
-    SymbolInformation, SymbolKind, TextEdit, WorkspaceEdit, WorkspaceSymbolParams,
+    InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location, MessageType,
+    Position, PrepareRenameResponse, Range, ReferenceParams, RenameParams, ServerInfo,
+    SignatureHelp, SignatureHelpParams, SymbolInformation, SymbolKind, TextEdit, WorkspaceEdit,
+    WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
@@ -21,6 +22,7 @@ use crate::{
     document_store::DocumentStore,
     goto_def::find_definition,
     hover::hover_at as hover_for_word,
+    inlay_hints::inlay_hints,
     signature_help::signature_help_for_method,
     text_util::word_at,
     type_check::check_type_mismatches,
@@ -530,6 +532,19 @@ impl LanguageServer for Backend {
         }
 
         Ok(if locations.is_empty() { None } else { Some(locations) })
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = &params.text_document.uri;
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else {
+            return Ok(None);
+        };
+
+        let hints = inlay_hints(&doc, &params.range);
+        Ok(if hints.is_empty() { None } else { Some(hints) })
     }
 
     async fn prepare_rename(
