@@ -96,33 +96,36 @@ pub fn member_completions(
     Some(CompletionResponse::Array(items))
 }
 
-/// Build a flat list of engine class names plus user-defined `class_name` declarations.
+/// Build a flat list of engine class names, user `class_name` declarations,
+/// and autoload singletons from project.godot.
 #[must_use]
 pub fn class_name_completions(
     api_db: &ApiDb,
     user_classes: &std::collections::HashMap<String, std::path::PathBuf>,
+    autoloads: &std::collections::HashMap<String, std::path::PathBuf>,
 ) -> CompletionResponse {
-    let engine: Vec<CompletionItem> = api_db
-        .class_names()
-        .map(|name| CompletionItem {
-            label: name.to_owned(),
-            kind: Some(CompletionItemKind::CLASS),
-            detail: Some("Godot engine class".to_owned()),
-            ..Default::default()
-        })
-        .collect();
+    let engine = api_db.class_names().map(|name| CompletionItem {
+        label: name.to_owned(),
+        kind: Some(CompletionItemKind::CLASS),
+        detail: Some("Godot engine class".to_owned()),
+        ..Default::default()
+    });
 
-    let user: Vec<CompletionItem> = user_classes
-        .keys()
-        .map(|name| CompletionItem {
-            label: name.clone(),
-            kind: Some(CompletionItemKind::CLASS),
-            detail: Some("User class".to_owned()),
-            ..Default::default()
-        })
-        .collect();
+    let user = user_classes.keys().map(|name| CompletionItem {
+        label: name.clone(),
+        kind: Some(CompletionItemKind::CLASS),
+        detail: Some("User class".to_owned()),
+        ..Default::default()
+    });
 
-    CompletionResponse::Array(engine.into_iter().chain(user).collect())
+    let singletons = autoloads.keys().map(|name| CompletionItem {
+        label: name.clone(),
+        kind: Some(CompletionItemKind::MODULE),
+        detail: Some("Autoload singleton".to_owned()),
+        ..Default::default()
+    });
+
+    CompletionResponse::Array(engine.chain(user).chain(singletons).collect())
 }
 
 /// Build completion items for `$` node path access — returns all node names
@@ -206,7 +209,7 @@ mod tests {
     fn class_name_completions_includes_node2d() {
         let db = db();
         let empty = std::collections::HashMap::new();
-        let labels = item_labels(Some(class_name_completions(&db, &empty)));
+        let labels = item_labels(Some(class_name_completions(&db, &empty, &empty)));
         assert!(labels.iter().any(|l| l == "Node2D"));
     }
 
@@ -215,9 +218,21 @@ mod tests {
         let db = db();
         let mut user = std::collections::HashMap::new();
         user.insert("Player".to_owned(), std::path::PathBuf::from("/res/player.gd"));
-        let labels = item_labels(Some(class_name_completions(&db, &user)));
+        let empty = std::collections::HashMap::new();
+        let labels = item_labels(Some(class_name_completions(&db, &user, &empty)));
         assert!(labels.iter().any(|l| l == "Player"));
-        assert!(labels.iter().any(|l| l == "Node2D")); // engine classes still present
+        assert!(labels.iter().any(|l| l == "Node2D"));
+    }
+
+    #[test]
+    fn class_name_completions_includes_autoloads() {
+        let db = db();
+        let empty = std::collections::HashMap::new();
+        let mut autoloads = std::collections::HashMap::new();
+        autoloads.insert("EventBusManager".to_owned(), std::path::PathBuf::from("/res/event_bus.gd"));
+        let labels = item_labels(Some(class_name_completions(&db, &empty, &autoloads)));
+        assert!(labels.iter().any(|l| l == "EventBusManager"));
+        assert!(labels.iter().any(|l| l == "Node2D"));
     }
 
     #[test]

@@ -96,10 +96,20 @@ impl Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        if let Some(root_uri) = params.root_uri {
-            if let Ok(path) = root_uri.to_file_path() {
-                *self.workspace_root.write().await = Some(path);
-            }
+        // Prefer root_uri; fall back to first workspace folder.
+        let root_path = params
+            .root_uri
+            .and_then(|u| u.to_file_path().ok())
+            .or_else(|| {
+                params
+                    .workspace_folders
+                    .as_deref()
+                    .and_then(|folders| folders.first())
+                    .and_then(|f| f.uri.to_file_path().ok())
+            });
+
+        if let Some(path) = root_path {
+            *self.workspace_root.write().await = Some(path);
         }
 
         Ok(InitializeResult {
@@ -360,16 +370,14 @@ impl LanguageServer for Backend {
             let empty = TypeMap::default();
             let type_map = type_maps.get(uri).unwrap_or(&empty);
 
-            // Resolve the receiver's type — check type map first, then direct
-            // engine class name, then project index class_names.
+            // Resolve the receiver's type — type map → engine class → user
+            // class_name → autoload singleton.
             let index = self.project_index.read().await;
             let resolved_type = type_map.resolve(receiver)
                 .map(str::to_owned)
                 .or_else(|| db.get_class(receiver).map(|c| c.name.clone()))
-                .or_else(|| {
-                    // receiver might itself be a class_name identifier
-                    index.class_names.contains_key(receiver).then(|| receiver.to_owned())
-                });
+                .or_else(|| index.class_names.contains_key(receiver).then(|| receiver.to_owned()))
+                .or_else(|| index.autoloads.contains_key(receiver).then(|| receiver.to_owned()));
 
             let result = if let Some(ref type_name) = resolved_type {
                 if db.get_class(type_name).is_some() {
@@ -378,7 +386,7 @@ impl LanguageServer for Backend {
                     fake_map.types.insert(receiver.to_owned(), type_name.clone());
                     member_completions(receiver, &fake_map, db)
                 } else {
-                    // User-defined type — show its file's symbols from project index
+                    // User class or autoload — show its file's symbols
                     user_class_completions(type_name, &index)
                 }
             } else {
@@ -390,7 +398,9 @@ impl LanguageServer for Backend {
 
         let db = self.api_db.read().await;
         let index = self.project_index.read().await;
-        let result = db.as_ref().map(|db| class_name_completions(db, &index.class_names));
+        let result = db
+            .as_ref()
+            .map(|db| class_name_completions(db, &index.class_names, &index.autoloads));
         Ok(result)
     }
 
@@ -768,8 +778,8 @@ impl LanguageServer for Backend {
     }
 }
 
-/// Build completions for a user-defined class by looking up its symbols in
-/// the project index's `file_symbols` map.
+/// Build completions for a user-defined class or autoload singleton by looking
+/// up its symbols in the project index's `file_symbols` map.
 fn user_class_completions(
     class_name: &str,
     index: &gdscript_indexer::ProjectIndex,
@@ -777,7 +787,11 @@ fn user_class_completions(
     use gdscript_core::symbol::SymbolKind;
     use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse};
 
-    let path = index.class_names.get(class_name)?;
+    // Try class_names first, then autoloads
+    let path = index
+        .class_names
+        .get(class_name)
+        .or_else(|| index.autoloads.get(class_name))?;
     let symbols = index.file_symbols.get(path)?;
 
     let items: Vec<CompletionItem> = symbols
