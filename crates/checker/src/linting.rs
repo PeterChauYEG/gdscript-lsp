@@ -6,17 +6,43 @@ use crate::diagnostics::{Diagnostic, Severity};
 /// - W0001: unused local variable
 /// - W0002: function with declared return type missing a return on some path
 /// - W0003: unreachable code after return/break/continue
+/// - W0004: file missing class_name declaration (plugin.gd exempt)
 #[must_use]
 pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let source = doc.source.as_bytes();
     let root = doc.tree.root_node();
 
+    let mut has_class_name = false;
+    let mut is_editor_plugin = false;
+
     for i in 0..root.child_count() {
         let Some(node) = root.child(i) else { continue };
-        if node.kind() == "function_definition" {
-            lint_function(&node, source, &mut out);
+        match node.kind() {
+            "class_name_statement" => has_class_name = true,
+            "extends_statement" => {
+                // Exempt EditorPlugin scripts — they're registered differently.
+                if let Ok(text) = node.utf8_text(source) {
+                    if text.contains("EditorPlugin") {
+                        is_editor_plugin = true;
+                    }
+                }
+            }
+            "function_definition" => lint_function(&node, source, &mut out),
+            _ => {}
         }
+    }
+
+    if !has_class_name && !is_editor_plugin {
+        out.push(Diagnostic {
+            line: 0,
+            col: 0,
+            end_line: 0,
+            end_col: 0,
+            severity: Severity::Warning,
+            code: Some("W0004".to_owned()),
+            message: "File is missing a class_name declaration".to_owned(),
+        });
     }
 
     out
@@ -284,5 +310,25 @@ mod tests {
     fn normal_code_not_unreachable() {
         let src = "func foo():\n\tvar x = 1\n\tvar y = 2\n\treturn\n";
         assert!(!codes(src).contains(&"W0003".to_owned()));
+    }
+
+    // --- missing class_name ---
+
+    #[test]
+    fn missing_class_name_warned() {
+        let src = "extends Node\nfunc _ready():\n\tpass\n";
+        assert!(codes(src).contains(&"W0004".to_owned()));
+    }
+
+    #[test]
+    fn class_name_present_no_warning() {
+        let src = "class_name MyClass\nextends Node\nfunc _ready():\n\tpass\n";
+        assert!(!codes(src).contains(&"W0004".to_owned()));
+    }
+
+    #[test]
+    fn editor_plugin_exempt_from_class_name_warning() {
+        let src = "@tool\nextends EditorPlugin\nfunc _enter_tree():\n\tpass\n";
+        assert!(!codes(src).contains(&"W0004".to_owned()));
     }
 }
