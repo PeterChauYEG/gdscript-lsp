@@ -109,7 +109,20 @@ impl LanguageServer for Backend {
             });
 
         if let Some(path) = root_path {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("gdscript-lsp: workspace root = {}", path.display()),
+                )
+                .await;
             *self.workspace_root.write().await = Some(path);
+        } else {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    "gdscript-lsp: no workspace root from initialize — will try to infer from first opened file",
+                )
+                .await;
         }
 
         Ok(InitializeResult {
@@ -151,13 +164,14 @@ impl LanguageServer for Backend {
                 match index_workspace(&root) {
                     Ok(new_index) => {
                         let class_count = new_index.class_names.len();
+                        let autoload_count = new_index.autoloads.len();
                         let file_count = new_index.file_symbols.len();
                         *index.write().await = new_index;
                         client
                             .log_message(
                                 MessageType::INFO,
                                 format!(
-                                    "project indexed: {file_count} files, {class_count} named classes"
+                                    "project indexed: {file_count} files, {class_count} named classes, {autoload_count} autoloads"
                                 ),
                             )
                             .await;
@@ -232,6 +246,54 @@ impl LanguageServer for Backend {
             .write()
             .await
             .open(uri.clone(), params.text_document.text);
+
+        // If workspace root was never set, try to infer it from this file by
+        // walking up to find project.godot. This handles clients that don't
+        // send root_uri / workspaceFolders in the initialize request.
+        {
+            let needs_root = self.workspace_root.read().await.is_none();
+            if needs_root {
+                if let Some(file_path) = uri.to_file_path().ok() {
+                    if let Some(root) = find_project_root(&file_path) {
+                        self.client
+                            .log_message(
+                                MessageType::INFO,
+                                format!("gdscript-lsp: inferred workspace root = {}", root.display()),
+                            )
+                            .await;
+                        *self.workspace_root.write().await = Some(root.clone());
+                        let index = self.project_index.clone();
+                        let client = self.client.clone();
+                        tokio::spawn(async move {
+                            match index_workspace(&root) {
+                                Ok(new_index) => {
+                                    let class_count = new_index.class_names.len();
+                                    let autoload_count = new_index.autoloads.len();
+                                    let file_count = new_index.file_symbols.len();
+                                    *index.write().await = new_index;
+                                    client
+                                        .log_message(
+                                            MessageType::INFO,
+                                            format!(
+                                                "project indexed (deferred): {file_count} files, {class_count} named classes, {autoload_count} autoloads"
+                                            ),
+                                        )
+                                        .await;
+                                }
+                                Err(e) => {
+                                    client
+                                        .log_message(
+                                            MessageType::WARNING,
+                                            format!("deferred project indexing failed: {e}"),
+                                        )
+                                        .await;
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        }
 
         self.update_type_map(&uri, &text).await;
         let call_diags = self.run_call_checker(&uri, &text).await;
@@ -398,6 +460,16 @@ impl LanguageServer for Backend {
 
         let db = self.api_db.read().await;
         let index = self.project_index.read().await;
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "completion: {} user classes, {} autoloads in index",
+                    index.class_names.len(),
+                    index.autoloads.len()
+                ),
+            )
+            .await;
         let result = db
             .as_ref()
             .map(|db| class_name_completions(db, &index.class_names, &index.autoloads));
@@ -816,6 +888,17 @@ fn user_class_completions(
         None
     } else {
         Some(CompletionResponse::Array(items))
+    }
+}
+
+/// Walk up from `file_path` to find the nearest directory containing `project.godot`.
+fn find_project_root(file_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut dir = file_path.parent()?;
+    loop {
+        if dir.join("project.godot").exists() {
+            return Some(dir.to_owned());
+        }
+        dir = dir.parent()?;
     }
 }
 
