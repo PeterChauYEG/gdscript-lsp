@@ -162,3 +162,4 @@ mod tests {
         assert_eq!(map.resolve("label"), Some("Label"));
     }
 }
+

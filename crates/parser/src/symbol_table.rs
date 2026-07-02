@@ -42,3 +42,19 @@ pub fn extract_symbols(doc: &ParsedDocument) -> Vec<SymbolDef> {
 
     symbols
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse::parse;
+
+    #[test]
+    fn extracts_signals_vars_and_funcs() {
+        let src = "class_name EventBusManager\nextends Node\nsignal game_start\nvar score: int = 0\nfunc _ready() -> void:\n\tpass\n";
+        let doc = parse(src).unwrap();
+        let syms = extract_symbols(&doc);
+        assert!(syms.iter().any(|s| s.name == "game_start"));
+        assert!(syms.iter().any(|s| s.name == "score"));
+        assert!(syms.iter().any(|s| s.name == "_ready"));
+    }
+}

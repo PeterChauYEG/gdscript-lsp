@@ -441,15 +441,41 @@ impl LanguageServer for Backend {
                 .or_else(|| index.class_names.contains_key(receiver).then(|| receiver.to_owned()))
                 .or_else(|| index.autoloads.contains_key(receiver).then(|| receiver.to_owned()));
 
+            self.client.log_message(
+                MessageType::INFO,
+                format!("dot completion: receiver={receiver:?} resolved={resolved_type:?}"),
+            ).await;
+
             let result = if let Some(ref type_name) = resolved_type {
                 if db.get_class(type_name).is_some() {
-                    // Engine type — full member completions
+                    // Engine type — full member completions.
+                    // For `self.`, also inject the current file's own symbols so
+                    // user-defined methods and signals appear alongside engine members.
                     let mut fake_map = TypeMap::default();
                     fake_map.types.insert(receiver.to_owned(), type_name.clone());
-                    member_completions(receiver, &fake_map, db)
+                    let mut base = member_completions(receiver, &fake_map, db);
+                    if receiver == "self" {
+                        if let Some(script_path) = uri.to_file_path().ok() {
+                            if let Some(own) = user_class_completions_by_path(&script_path, &index) {
+                                base = Some(merge_completions(base, own));
+                            }
+                        }
+                    }
+                    base
                 } else {
-                    // User class or autoload — show its file's symbols
-                    user_class_completions(type_name, &index)
+                    // User class or autoload — show its file's symbols.
+                    let result = user_class_completions(type_name, &index);
+                    self.client.log_message(
+                        MessageType::INFO,
+                        format!(
+                            "dot completion: user_class_completions({type_name}) → {} items",
+                            result.as_ref().map(|r| match r {
+                                tower_lsp::lsp_types::CompletionResponse::Array(v) => v.len(),
+                                _ => 0,
+                            }).unwrap_or(0)
+                        ),
+                    ).await;
+                    result
                 }
             } else {
                 member_completions(receiver, type_map, db)
@@ -850,6 +876,55 @@ impl LanguageServer for Backend {
 
 /// Build completions for a user-defined class or autoload singleton by looking
 /// up its symbols in the project index's `file_symbols` map.
+/// Look up symbols directly by file path (for `self.` completions on the current file).
+fn user_class_completions_by_path(
+    path: &std::path::Path,
+    index: &gdscript_indexer::ProjectIndex,
+) -> Option<tower_lsp::lsp_types::CompletionResponse> {
+    use gdscript_core::symbol::SymbolKind;
+    use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse};
+
+    let symbols = index.file_symbols.get(path)?;
+    let items: Vec<CompletionItem> = symbols
+        .iter()
+        .map(|sym| {
+            let kind = match sym.kind {
+                SymbolKind::Function => CompletionItemKind::FUNCTION,
+                SymbolKind::Variable => CompletionItemKind::FIELD,
+                SymbolKind::Constant => CompletionItemKind::CONSTANT,
+                SymbolKind::Signal => CompletionItemKind::EVENT,
+                SymbolKind::Class => CompletionItemKind::CLASS,
+                SymbolKind::Enum | SymbolKind::EnumMember => CompletionItemKind::ENUM,
+            };
+            CompletionItem { label: sym.name.clone(), kind: Some(kind), ..Default::default() }
+        })
+        .collect();
+    if items.is_empty() { None } else { Some(CompletionResponse::Array(items)) }
+}
+
+/// Merge two CompletionResponses, deduplicating by label.
+fn merge_completions(
+    a: Option<tower_lsp::lsp_types::CompletionResponse>,
+    b: tower_lsp::lsp_types::CompletionResponse,
+) -> tower_lsp::lsp_types::CompletionResponse {
+    use tower_lsp::lsp_types::CompletionResponse;
+    use std::collections::HashSet;
+
+    let mut items = match a {
+        Some(CompletionResponse::Array(v)) => v,
+        _ => Vec::new(),
+    };
+    let seen: HashSet<String> = items.iter().map(|i| i.label.clone()).collect();
+    if let CompletionResponse::Array(extra) = b {
+        for item in extra {
+            if !seen.contains(&item.label) {
+                items.push(item);
+            }
+        }
+    }
+    CompletionResponse::Array(items)
+}
+
 fn user_class_completions(
     class_name: &str,
     index: &gdscript_indexer::ProjectIndex,
