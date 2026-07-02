@@ -484,22 +484,52 @@ impl LanguageServer for Backend {
             return Ok(result);
         }
 
+        // No trigger — return class names + current file's own members +
+        // base-class engine members (GDScript: `self.` is implicit).
         let db = self.api_db.read().await;
+        let type_maps = self.type_maps.read().await;
+        let empty = TypeMap::default();
+        let type_map = type_maps.get(uri).unwrap_or(&empty);
         let index = self.project_index.read().await;
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!(
-                    "completion: {} user classes, {} autoloads in index",
-                    index.class_names.len(),
-                    index.autoloads.len()
-                ),
-            )
-            .await;
-        let result = db
-            .as_ref()
-            .map(|db| class_name_completions(db, &index.class_names, &index.autoloads));
-        Ok(result)
+
+        let Some(db) = db.as_ref() else { return Ok(None) };
+
+        // All class names (engine + user + autoloads)
+        let mut all = match class_name_completions(db, &index.class_names, &index.autoloads) {
+            tower_lsp::lsp_types::CompletionResponse::Array(v) => v,
+            _ => vec![],
+        };
+
+        // Current file's own symbols (methods, vars, signals, etc.)
+        if let Some(script_path) = uri.to_file_path().ok() {
+            if let Some(own) = user_class_completions_by_path(&script_path, &index) {
+                if let tower_lsp::lsp_types::CompletionResponse::Array(items) = own {
+                    let seen: std::collections::HashSet<_> = all.iter().map(|i| i.label.clone()).collect();
+                    for item in items {
+                        if !seen.contains(&item.label) {
+                            all.push(item);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Base class engine members (implicit self)
+        if let Some(self_type) = type_map.self_type.as_deref() {
+            if let Some(base) = member_completions("self", type_map, db) {
+                if let tower_lsp::lsp_types::CompletionResponse::Array(items) = base {
+                    let seen: std::collections::HashSet<_> = all.iter().map(|i| i.label.clone()).collect();
+                    for item in items {
+                        if !seen.contains(&item.label) {
+                            all.push(item);
+                        }
+                    }
+                }
+            }
+            let _ = self_type; // used above via type_map
+        }
+
+        Ok(Some(tower_lsp::lsp_types::CompletionResponse::Array(all)))
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
