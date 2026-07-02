@@ -67,6 +67,16 @@ impl Backend {
         }
     }
 
+    async fn autoload_paths(&self) -> std::collections::HashSet<std::path::PathBuf> {
+        self.project_index
+            .read()
+            .await
+            .autoloads
+            .values()
+            .cloned()
+            .collect()
+    }
+
     async fn update_type_map(&self, uri: &tower_lsp::lsp_types::Url, source: &str) {
         if let Ok(doc) = gdscript_parser::parse::parse(source) {
             let map = extract_types(&doc);
@@ -297,7 +307,8 @@ impl LanguageServer for Backend {
 
         self.update_type_map(&uri, &text).await;
         let call_diags = self.run_call_checker(&uri, &text).await;
-        publish_diagnostics(&self.client, uri, version, &text, call_diags).await;
+        let autoloads = self.autoload_paths().await;
+        publish_diagnostics(&self.client, uri, version, &text, call_diags, &autoloads).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -316,7 +327,8 @@ impl LanguageServer for Backend {
 
         self.update_type_map(&uri, &text).await;
         let call_diags = self.run_call_checker(&uri, &text).await;
-        publish_diagnostics(&self.client, uri, version, &text, call_diags).await;
+        let autoloads = self.autoload_paths().await;
+        publish_diagnostics(&self.client, uri, version, &text, call_diags, &autoloads).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
