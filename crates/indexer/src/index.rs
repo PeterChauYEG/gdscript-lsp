@@ -56,13 +56,16 @@ pub fn index_workspace(root: &Path) -> Result<ProjectIndex, IndexerError> {
     let mut index = ProjectIndex::new();
 
     // Parse project.godot for autoloads and version.
+    // Use project.godot's parent as the res:// root — the workspace folder
+    // may differ from the Godot project root.
     if let Some(project_file) = crate::project_godot::find(root) {
+        let project_root = project_file.parent().unwrap_or(root);
         if let Ok(content) = std::fs::read_to_string(&project_file) {
             let config = crate::project_godot::parse(&content);
             index.godot_version = config.godot_version;
 
             for (name, res_path) in config.autoloads {
-                let abs = res_to_abs(&res_path, root);
+                let abs = res_to_abs(&res_path, project_root);
                 index.autoloads.insert(name, abs);
             }
         }

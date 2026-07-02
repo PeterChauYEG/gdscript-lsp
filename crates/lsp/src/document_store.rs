@@ -26,4 +26,9 @@ impl DocumentStore {
     pub fn get(&self, uri: &Url) -> Option<&str> {
         self.documents.get(uri).map(String::as_str)
     }
+
+    /// Return a snapshot of all open documents.
+    pub fn all(&self) -> HashMap<Url, String> {
+        self.documents.clone()
+    }
 }

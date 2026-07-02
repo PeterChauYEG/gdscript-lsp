@@ -570,7 +570,8 @@ impl LanguageServer for Backend {
         let uri = &params.text_document_position.text_document.uri;
         let pos = &params.text_document_position.position;
 
-        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let documents = self.documents.read().await;
+        let source = documents.get(uri).map(str::to_owned);
         let Some(source) = source else { return Ok(None) };
 
         let Some(word) = word_at(&source, pos.line, pos.character) else {
@@ -578,49 +579,46 @@ impl LanguageServer for Backend {
         };
         let word = word.to_owned();
 
+        // Build search corpus: indexed files on disk + all open documents
+        // (open docs take priority over disk — they may have unsaved changes).
         let index = self.project_index.read().await;
-        let paths: Vec<std::path::PathBuf> = index.file_symbols.keys().cloned().collect();
+        let indexed_paths: Vec<std::path::PathBuf> =
+            index.file_symbols.keys().cloned().collect();
+
+        // Collect open documents keyed by their URI.
+        let open_docs: std::collections::HashMap<tower_lsp::lsp_types::Url, String> =
+            documents.all();
         drop(index);
+        drop(documents);
 
         let mut locations = Vec::new();
 
-        for path in paths {
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let Ok(file_uri) = tower_lsp::lsp_types::Url::from_file_path(&path) else { continue };
-
-            for (line_num, line_text) in text.lines().enumerate() {
-                let mut search = line_text;
-                let mut col_offset = 0usize;
-                while let Some(pos) = search.find(word.as_str()) {
-                    let abs = col_offset + pos;
-                    // Verify it's a whole word.
-                    let before_ok = abs == 0
-                        || !line_text.as_bytes()[abs - 1].is_ascii_alphanumeric()
-                            && line_text.as_bytes()[abs - 1] != b'_';
-                    let after = abs + word.len();
-                    let after_ok = after >= line_text.len()
-                        || !line_text.as_bytes()[after].is_ascii_alphanumeric()
-                            && line_text.as_bytes()[after] != b'_';
-
-                    if before_ok && after_ok {
-                        locations.push(Location {
-                            uri: file_uri.clone(),
-                            range: Range {
-                                start: Position {
-                                    line: line_num as u32,
-                                    character: abs as u32,
-                                },
-                                end: Position {
-                                    line: line_num as u32,
-                                    character: (abs + word.len()) as u32,
-                                },
-                            },
-                        });
-                    }
-
-                    col_offset += pos + 1;
-                    search = &search[pos + 1..];
+        // Search indexed files, preferring in-memory content for open docs.
+        for path in &indexed_paths {
+            let file_uri = match tower_lsp::lsp_types::Url::from_file_path(path) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            let text = if let Some(doc) = open_docs.get(&file_uri) {
+                doc.clone()
+            } else {
+                match std::fs::read_to_string(path) {
+                    Ok(t) => t,
+                    Err(_) => continue,
                 }
+            };
+            search_word_in_text(&text, &word, &file_uri, &mut locations);
+        }
+
+        // Also search any open document not in the index (e.g. new unsaved files).
+        for (doc_uri, text) in &open_docs {
+            let already_searched = doc_uri
+                .to_file_path()
+                .ok()
+                .map(|p| indexed_paths.contains(&p))
+                .unwrap_or(false);
+            if !already_searched {
+                search_word_in_text(text, &word, doc_uri, &mut locations);
             }
         }
 
@@ -818,6 +816,42 @@ fn user_class_completions(
         None
     } else {
         Some(CompletionResponse::Array(items))
+    }
+}
+
+/// Scan `text` for whole-word occurrences of `word` and append matches to `out`.
+fn search_word_in_text(
+    text: &str,
+    word: &str,
+    uri: &tower_lsp::lsp_types::Url,
+    out: &mut Vec<Location>,
+) {
+    for (line_num, line_text) in text.lines().enumerate() {
+        let bytes = line_text.as_bytes();
+        let wlen = word.len();
+        let mut start = 0usize;
+        while start + wlen <= bytes.len() {
+            if let Some(rel) = line_text[start..].find(word) {
+                let abs = start + rel;
+                let before_ok = abs == 0
+                    || (!bytes[abs - 1].is_ascii_alphanumeric() && bytes[abs - 1] != b'_');
+                let after = abs + wlen;
+                let after_ok = after >= bytes.len()
+                    || (!bytes[after].is_ascii_alphanumeric() && bytes[after] != b'_');
+                if before_ok && after_ok {
+                    out.push(Location {
+                        uri: uri.clone(),
+                        range: Range {
+                            start: Position { line: line_num as u32, character: abs as u32 },
+                            end: Position { line: line_num as u32, character: after as u32 },
+                        },
+                    });
+                }
+                start = abs + 1;
+            } else {
+                break;
+            }
+        }
     }
 }
 
