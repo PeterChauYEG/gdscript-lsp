@@ -57,23 +57,18 @@ jobs:
       - name: cargo test
         run: cargo test
 
-  release:
-    name: release (macos-x86_64)
-    runs-on: macos-14
+  version:
+    name: version
+    runs-on: [self-hosted, catfood]
     needs: [fmt, clippy, test]
-    env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+    outputs:
+      version: ${{ steps.calver.outputs.version }}
+      tag: ${{ steps.calver.outputs.tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Install Rust stable
-        run: rustup update stable && rustup default stable && rustup target add x86_64-apple-darwin
-
-      - name: Cache Cargo registry
-        uses: Swatinem/rust-cache@v2
 
       - name: Generate CalVer version
         id: calver
@@ -101,40 +96,135 @@ jobs:
           echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
           echo "Releasing ${VERSION}"
 
-      - name: Build binary
-        run: cargo build --release --target x86_64-apple-darwin
+  build-macos:
+    name: build (${{ matrix.name }})
+    runs-on: macos-14
+    needs: [version]
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            name: macos-x86_64
+          - target: aarch64-apple-darwin
+            name: macos-arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Stage artifacts
+      - name: Install Rust stable
+        run: rustup update stable && rustup default stable && rustup target add ${{ matrix.target }}
+
+      - name: Cache Cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage artifact
         run: |
           mkdir -p dist
-          cp target/x86_64-apple-darwin/release/gdscript-lsp dist/gdscript-lsp-macos-x86_64
-          chmod +x dist/gdscript-lsp-macos-x86_64
-          shasum -a 256 dist/gdscript-lsp-macos-x86_64 | awk '{print $1}' > dist/gdscript-lsp-macos-x86_64.sha256
+          cp target/${{ matrix.target }}/release/gdscript-lsp dist/gdscript-lsp-${{ matrix.name }}
+          chmod +x dist/gdscript-lsp-${{ matrix.name }}
+          shasum -a 256 dist/gdscript-lsp-${{ matrix.name }} | awk '{print $1}' > dist/gdscript-lsp-${{ matrix.name }}.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.name }}
+          path: dist/*
+
+  build-linux:
+    name: build (linux-x86_64)
+    runs-on: [self-hosted, catfood]
+    needs: [version]
+    env:
+      CARGO_HOME: /home/github-runner/cargo-cache
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build binary
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-gnu/release/gdscript-lsp dist/gdscript-lsp-linux-x86_64
+          chmod +x dist/gdscript-lsp-linux-x86_64
+          sha256sum dist/gdscript-lsp-linux-x86_64 | awk '{print $1}' > dist/gdscript-lsp-linux-x86_64.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-x86_64
+          path: dist/*
+
+  release:
+    name: release
+    runs-on: [self-hosted, catfood]
+    needs: [version, build-macos, build-linux]
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      TAP_REPO_TOKEN: ${{ secrets.TAP_REPO_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
 
       - name: Build VSCode extension
         working-directory: editors/vscode
         run: |
           npm ci
           npm run typecheck
-          npm version ${{ steps.calver.outputs.version }} --no-git-tag-version --allow-same-version
+          npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
           npm run package
           cp gdscript-lsp-*.vsix ../../dist/
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.calver.outputs.tag }}
-          name: ${{ steps.calver.outputs.tag }}
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
           generate_release_notes: true
           files: |
             dist/gdscript-lsp-macos-x86_64
             dist/gdscript-lsp-macos-x86_64.sha256
+            dist/gdscript-lsp-macos-arm64
+            dist/gdscript-lsp-macos-arm64.sha256
+            dist/gdscript-lsp-linux-x86_64
+            dist/gdscript-lsp-linux-x86_64.sha256
             dist/*.vsix
 
       - name: Publish to VS Code Marketplace
         if: ${{ env.VSCE_PAT != '' }}
         working-directory: editors/vscode
         run: npx vsce publish --no-dependencies -p "$VSCE_PAT"
+
+      - name: Notify Homebrew tap
+        if: ${{ env.TAP_REPO_TOKEN != '' }}
+        run: |
+          curl -fsSL -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${TAP_REPO_TOKEN}" \
+            https://api.github.com/repos/PeterChauYEG/homebrew-tap/dispatches \
+            -d "$(jq -n \
+              --arg version "${{ needs.version.outputs.version }}" \
+              --arg macos_x86_64_sha256 "$(cat dist/gdscript-lsp-macos-x86_64.sha256)" \
+              --arg macos_arm64_sha256 "$(cat dist/gdscript-lsp-macos-arm64.sha256)" \
+              --arg linux_x86_64_sha256 "$(cat dist/gdscript-lsp-linux-x86_64.sha256)" \
+              '{event_type: "gdscript-lsp-release", client_payload: {version: $version, macos_x86_64_sha256: $macos_x86_64_sha256, macos_arm64_sha256: $macos_arm64_sha256, linux_x86_64_sha256: $linux_x86_64_sha256}}')"
 
   slack-notification:
     runs-on: [self-hosted, catfood]
