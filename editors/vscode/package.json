@@ -14,7 +14,7 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "activationEvents": ["workspaceContains:**/*.gd"],
+  "activationEvents": ["onLanguage:gdscript"],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
@@ -35,7 +35,7 @@
     "commands": [
       {
         "command": "gdscript-lsp.restart",
-        "title": "GDScript LSP: Restart Server"
+        "title": "Restart GDScript LSP Server"
       }
     ],
     "configuration": {
@@ -44,7 +44,12 @@
         "gdscript-lsp.serverPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Path to the `gdscript-lsp` binary. Leave empty to search common locations and `$PATH`."
+          "markdownDescription": "Path to the `gdscript-lsp` binary. Leave empty to auto-download the latest release for your platform."
+        },
+        "gdscript-lsp.gdformatPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `gdformat` binary, used for `textDocument/formatting`. Leave empty to search `$PATH`."
         },
         "gdscript-lsp.trace.server": {
           "type": "string",
@@ -58,7 +63,9 @@
   "scripts": {
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
     "package": "node esbuild.js --production && vsce package --no-dependencies",
+    "publish": "vsce publish --no-dependencies",
     "vscode:prepublish": "node esbuild.js --production"
   },
   "dependencies": {

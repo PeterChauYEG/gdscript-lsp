@@ -61,6 +61,8 @@ jobs:
     name: release (macos-x86_64)
     runs-on: macos-14
     needs: [fmt, clippy, test]
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,22 +74,6 @@ jobs:
 
       - name: Cache Cargo registry
         uses: Swatinem/rust-cache@v2
-
-      - name: Build binary
-        run: cargo build --release --target x86_64-apple-darwin
-
-      - name: Stage artifacts
-        run: |
-          mkdir -p dist
-          cp target/x86_64-apple-darwin/release/gdscript-lsp dist/gdscript-lsp-macos-x86_64
-          chmod +x dist/gdscript-lsp-macos-x86_64
-
-      - name: Build VSCode extension
-        working-directory: editors/vscode
-        run: |
-          npm ci
-          npm run package
-          cp gdscript-lsp-*.vsix ../../dist/
 
       - name: Generate CalVer version
         id: calver
@@ -115,6 +101,25 @@ jobs:
           echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
           echo "Releasing ${VERSION}"
 
+      - name: Build binary
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp target/x86_64-apple-darwin/release/gdscript-lsp dist/gdscript-lsp-macos-x86_64
+          chmod +x dist/gdscript-lsp-macos-x86_64
+          shasum -a 256 dist/gdscript-lsp-macos-x86_64 | awk '{print $1}' > dist/gdscript-lsp-macos-x86_64.sha256
+
+      - name: Build VSCode extension
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          npm run typecheck
+          npm version ${{ steps.calver.outputs.version }} --no-git-tag-version --allow-same-version
+          npm run package
+          cp gdscript-lsp-*.vsix ../../dist/
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -123,7 +128,13 @@ jobs:
           generate_release_notes: true
           files: |
             dist/gdscript-lsp-macos-x86_64
+            dist/gdscript-lsp-macos-x86_64.sha256
             dist/*.vsix
+
+      - name: Publish to VS Code Marketplace
+        if: ${{ env.VSCE_PAT != '' }}
+        working-directory: editors/vscode
+        run: npx vsce publish --no-dependencies -p "$VSCE_PAT"
 
   slack-notification:
     runs-on: [self-hosted, catfood]
