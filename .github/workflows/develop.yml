@@ -56,6 +56,32 @@ jobs:
       - name: cargo test
         run: cargo test
 
+  vscode-extension:
+    name: vscode-extension
+    runs-on: [self-hosted, catfood]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: npm ci
+        working-directory: editors/vscode
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: editors/vscode
+        run: npm run typecheck
+
+      - name: Compile
+        working-directory: editors/vscode
+        run: npm run compile
+
   slack-notification:
     runs-on: [self-hosted, catfood]
     if: always()
@@ -63,6 +89,7 @@ jobs:
       - fmt
       - clippy
       - test
+      - vscode-extension
     steps:
       - name: Post a message in a channel
         if: ${{ env.SLACK_WEBHOOK_URL != '' }}

@@ -1,5 +1,4 @@
 import * as fs from 'fs';
-import * as path from 'path';
 import * as vscode from 'vscode';
 import {
     LanguageClient,
@@ -9,13 +8,19 @@ import {
     TransportKind,
 } from 'vscode-languageclient/node';
 
+import { ensureServerBinary, UnsupportedPlatformError } from './downloader';
+
 const CLIENT_ID = 'gdscript-lsp';
 const CLIENT_NAME = 'GDScript LSP';
 
 let client: LanguageClient | undefined;
 let statusBar: vscode.StatusBarItem;
+let outputChannel: vscode.OutputChannel;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    outputChannel = vscode.window.createOutputChannel(CLIENT_NAME);
+    context.subscriptions.push(outputChannel);
+
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
     statusBar.command = 'gdscript-lsp.restart';
     statusBar.show();
@@ -24,24 +29,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(
         vscode.commands.registerCommand('gdscript-lsp.restart', async () => {
             await stopClient();
-            await startClient();
+            await startClient(context);
         }),
     );
 
-    await startClient();
+    await startClient(context);
 }
 
 export async function deactivate(): Promise<void> {
     await stopClient();
 }
 
-async function startClient(): Promise<void> {
-    const serverPath = resolveServerPath();
+async function startClient(context: vscode.ExtensionContext): Promise<void> {
     setStatus('starting');
+
+    let serverPath: string;
+    try {
+        serverPath = await resolveServerPath(context);
+    } catch (err) {
+        setStatus('error');
+        const msg = err instanceof Error ? err.message : String(err);
+        outputChannel.appendLine(`Failed to resolve server binary: ${msg}`);
+        const action = await vscode.window.showErrorMessage(
+            `GDScript LSP: failed to obtain server binary — ${msg}`,
+            'Set Server Path',
+            'View Releases',
+        );
+        if (action === 'Set Server Path') {
+            await vscode.commands.executeCommand(
+                'workbench.action.openSettings',
+                'gdscript-lsp.serverPath',
+            );
+        } else if (action === 'View Releases') {
+            await vscode.env.openExternal(
+                vscode.Uri.parse('https://github.com/PeterChauYEG/gdscript-lsp/releases'),
+            );
+        }
+        return;
+    }
+
+    const gdformatPath = vscode.workspace.getConfiguration(CLIENT_ID).get<string>('gdformatPath');
 
     const serverOptions: ServerOptions = {
         command: serverPath,
         transport: TransportKind.stdio,
+        options: gdformatPath ? { env: { ...process.env, GDFORMAT_PATH: gdformatPath } } : undefined,
     };
 
     const clientOptions: LanguageClientOptions = {
@@ -49,6 +81,8 @@ async function startClient(): Promise<void> {
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.gd'),
         },
+        outputChannel,
+        initializationOptions: gdformatPath ? { gdformatPath } : undefined,
     };
 
     client = new LanguageClient(CLIENT_ID, CLIENT_NAME, serverOptions, clientOptions);
@@ -68,6 +102,7 @@ async function startClient(): Promise<void> {
     } catch (err) {
         setStatus('error');
         const msg = err instanceof Error ? err.message : String(err);
+        outputChannel.appendLine(`Failed to start server: ${msg}`);
         const action = await vscode.window.showErrorMessage(
             `GDScript LSP: failed to start — ${msg}`,
             'Set Server Path',
@@ -118,29 +153,25 @@ function setStatus(state: 'starting' | 'running' | 'stopped' | 'error', detail?:
     }
 }
 
-function resolveServerPath(): string {
+async function resolveServerPath(context: vscode.ExtensionContext): Promise<string> {
     const config = vscode.workspace.getConfiguration(CLIENT_ID);
     const configured = config.get<string>('serverPath');
     if (configured) {
+        if (!fs.existsSync(configured)) {
+            throw new Error(`gdscript-lsp.serverPath is set to "${configured}", but no file exists there.`);
+        }
         return configured;
     }
 
-    const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
-    const ext = process.platform === 'win32' ? '.exe' : '';
-    const binary = `gdscript-lsp${ext}`;
-
-    const candidates: string[] = [
-        path.join(home, '.local', 'bin', binary),
-        `/opt/homebrew/bin/${binary}`,
-        `/usr/local/bin/${binary}`,
-    ];
-
-    for (const candidate of candidates) {
-        if (fs.existsSync(candidate)) {
-            return candidate;
+    try {
+        return await ensureServerBinary(context, outputChannel);
+    } catch (err) {
+        if (err instanceof UnsupportedPlatformError) {
+            throw err;
         }
+        throw new Error(
+            `Could not download the gdscript-lsp binary (${(err as Error).message}). ` +
+                'Set gdscript-lsp.serverPath to point at a manually installed binary.',
+        );
     }
-
-    // Fall through to PATH — if not found, the client will surface the error.
-    return binary;
 }
