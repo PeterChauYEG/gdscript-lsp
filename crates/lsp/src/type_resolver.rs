@@ -22,6 +22,27 @@ impl TypeMap {
 /// Extract explicit type annotations from a parsed GDScript document.
 #[must_use]
 pub fn extract_types(doc: &ParsedDocument) -> TypeMap {
+    extract_types_impl(doc, None)
+}
+
+/// Like [`extract_types`] but also infers types for `@onready` variables that
+/// have no explicit type annotation and a `$NodePath` initializer.
+///
+/// When a variable is declared as `@onready var sprite = $Sprite2D` (no `:
+/// Type` annotation), the type is looked up in `scene_map` using the last
+/// component of the node path. If found, the inferred type is stored in the
+/// returned [`TypeMap`] exactly like an explicitly annotated variable.
+///
+/// # LAB-700
+#[must_use]
+pub fn extract_types_with_scene(
+    doc: &ParsedDocument,
+    scene_map: &HashMap<String, String>,
+) -> TypeMap {
+    extract_types_impl(doc, Some(scene_map))
+}
+
+fn extract_types_impl(doc: &ParsedDocument, scene_map: Option<&HashMap<String, String>>) -> TypeMap {
     let mut map = TypeMap::default();
     let source = doc.source.as_bytes();
     let root = doc.tree.root_node();
@@ -43,6 +64,10 @@ pub fn extract_types(doc: &ParsedDocument) -> TypeMap {
             }
             "variable_statement" | "const_statement" => {
                 extract_var_type(&node, source, &mut map.types);
+                // LAB-700: also infer type from @onready + $NodePath when no explicit type
+                if let Some(sm) = scene_map {
+                    extract_onready_inferred_type(&node, source, sm, &mut map.types);
+                }
             }
             "function_definition" => {
                 extract_func_types(&node, source, &mut map.types);
@@ -52,6 +77,85 @@ pub fn extract_types(doc: &ParsedDocument) -> TypeMap {
     }
 
     map
+}
+
+/// For `@onready var sprite = $Sprite2D` (no explicit type annotation), infer
+/// the type from the scene map using the node path's last component.
+///
+/// Only fires when:
+/// - The statement has a `@onready` decorator.
+/// - There is no explicit `: Type` annotation.
+/// - The RHS is a `get_node` expression (starts with `$`).
+fn extract_onready_inferred_type(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    scene_map: &HashMap<String, String>,
+    out: &mut HashMap<String, String>,
+) {
+    // Only process variable_statement nodes.
+    if node.kind() != "variable_statement" {
+        return;
+    }
+    // Skip if already has an explicit type annotation — extract_var_type handles that.
+    if node.child_by_field_name("type").is_some() {
+        return;
+    }
+    // Must have @onready decorator.
+    if !node_has_decorator(node, source, "onready") {
+        return;
+    }
+    // Get the variable name.
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let Ok(name) = name_node.utf8_text(source) else { return };
+    // Already resolved — don't overwrite.
+    if out.contains_key(name) {
+        return;
+    }
+    // Find the RHS value (after `=`).
+    let rhs = rhs_node(node);
+    let Some(rhs) = rhs else { return };
+    // The RHS must be a get_node expression (e.g. `$Sprite2D`).
+    if rhs.kind() != "get_node" {
+        return;
+    }
+    let Ok(rhs_text) = rhs.utf8_text(source) else { return };
+    if let Some(ty) = resolve_dollar_path(rhs_text, scene_map) {
+        out.insert(name.to_owned(), ty);
+    }
+}
+
+/// Returns `true` if `stmt` has a `decorator` child whose first named child
+/// text equals `name` (e.g. `"onready"` for `@onready`).
+fn node_has_decorator(stmt: &tree_sitter::Node, source: &[u8], name: &str) -> bool {
+    for i in 0..stmt.child_count() {
+        let Some(child) = stmt.child(i) else { continue };
+        if child.kind() != "decorator" {
+            continue;
+        }
+        for j in 0..child.child_count() {
+            let Some(inner) = child.child(j) else { continue };
+            if inner.is_named() {
+                if inner.utf8_text(source).ok() == Some(name) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Returns the first named node after `=` in a statement.
+fn rhs_node<'a>(stmt: &'a tree_sitter::Node) -> Option<tree_sitter::Node<'a>> {
+    let mut after_eq = false;
+    for i in 0..stmt.child_count() {
+        let Some(child) = stmt.child(i) else { continue };
+        if child.kind() == "=" {
+            after_eq = true;
+        } else if after_eq && child.is_named() {
+            return Some(child);
+        }
+    }
+    None
 }
 
 fn extract_var_type(node: &tree_sitter::Node, source: &[u8], out: &mut HashMap<String, String>) {
@@ -306,6 +410,57 @@ mod tests {
             resolve_dollar_path("Label", &scene_map),
             Some("Label".to_owned())
         );
+    }
+
+    // --- LAB-700: @onready implied type annotation ---
+
+    fn types_with_scene(src: &str, scene_map: &HashMap<String, String>) -> TypeMap {
+        let doc = parse(src).unwrap();
+        extract_types_with_scene(&doc, scene_map)
+    }
+
+    #[test]
+    fn onready_without_type_infers_from_scene_map() {
+        let mut scene_map = HashMap::new();
+        scene_map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
+        let map = types_with_scene("@onready var sprite = $Sprite2D\n", &scene_map);
+        assert_eq!(map.resolve("sprite"), Some("Sprite2D"));
+    }
+
+    #[test]
+    fn onready_with_explicit_type_not_overridden() {
+        // When an explicit type annotation is present, the scene_map is ignored.
+        let mut scene_map = HashMap::new();
+        scene_map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
+        let map = types_with_scene("@onready var sprite: Sprite2D = $Sprite2D\n", &scene_map);
+        // Type comes from the explicit annotation, same result but via different path.
+        assert_eq!(map.resolve("sprite"), Some("Sprite2D"));
+    }
+
+    #[test]
+    fn onready_without_type_nested_path_infers_from_scene_map() {
+        let mut scene_map = HashMap::new();
+        scene_map.insert("HealthBar".to_owned(), "ProgressBar".to_owned());
+        let map = types_with_scene("@onready var hbar = $UI/HealthBar\n", &scene_map);
+        assert_eq!(map.resolve("hbar"), Some("ProgressBar"));
+    }
+
+    #[test]
+    fn onready_without_dollar_rhs_not_inferred() {
+        // Non-$NodePath RHS: no scene inference.
+        let mut scene_map = HashMap::new();
+        scene_map.insert("Node2D".to_owned(), "Node2D".to_owned());
+        let map = types_with_scene("@onready var x = get_node(\"Foo\")\n", &scene_map);
+        assert!(map.resolve("x").is_none(), "should not infer type from non-$ RHS");
+    }
+
+    #[test]
+    fn onready_not_present_no_inference() {
+        // Without @onready, unannotated vars stay unresolved.
+        let mut scene_map = HashMap::new();
+        scene_map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
+        let map = types_with_scene("var sprite = $Sprite2D\n", &scene_map);
+        assert!(map.resolve("sprite").is_none());
     }
 
     // --- LAB-692: Array[T] generic type tracking ---
