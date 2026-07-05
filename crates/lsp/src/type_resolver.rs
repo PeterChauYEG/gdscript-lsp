@@ -207,6 +207,48 @@ fn extract_body_var_types(body: &tree_sitter::Node, source: &[u8], out: &mut Has
             extract_var_type(&child, source, out);
             // LAB-709: infer subscript element type for `var x = arr[0]` where arr: Array[T]
             infer_subscript_type(&child, source, out);
+            // LAB-694: if RHS is a lambda, extract its parameter types into the outer scope
+            // so that captured variable resolution can find them.
+            extract_lambda_param_types(&child, source, out);
+        }
+    }
+}
+
+/// If `stmt` is `var f = func(x: int): ...`, populate `out` with the lambda's
+/// parameter types so they're available for inner-body type checking.
+/// This also enables LAB-697 closure capture: the lambda body sees outer vars via `out`.
+fn extract_lambda_param_types(
+    stmt: &tree_sitter::Node,
+    source: &[u8],
+    out: &mut HashMap<String, String>,
+) {
+    let Some(rhs) = rhs_node(stmt) else { return };
+    if rhs.kind() != "lambda" {
+        return;
+    }
+    // Lambda params live in the `parameters` field.
+    let Some(params) = rhs.child_by_field_name("parameters") else { return };
+    extract_params_types(&params, source, out);
+}
+
+/// Extract typed parameters from a `parameters` node into `out`.
+fn extract_params_types(params: &tree_sitter::Node, source: &[u8], out: &mut HashMap<String, String>) {
+    for i in 0..params.child_count() {
+        let Some(param) = params.child(i) else { continue };
+        if param.kind() == "typed_parameter" {
+            let mut ident: Option<String> = None;
+            let mut type_name: Option<String> = None;
+            for k in 0..param.child_count() {
+                let Some(p) = param.child(k) else { continue };
+                if p.kind() == "identifier" && ident.is_none() {
+                    ident = p.utf8_text(source).ok().map(str::to_owned);
+                } else if p.kind() == "type" {
+                    type_name = type_ident(&p, source).map(str::to_owned);
+                }
+            }
+            if let (Some(name), Some(ty)) = (ident, type_name) {
+                out.insert(name, ty);
+            }
         }
     }
 }

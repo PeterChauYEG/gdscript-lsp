@@ -54,6 +54,15 @@ fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u
                 push_node(&name, TT_FUNCTION, out);
             }
         }
+        "lambda" => {
+            // Optional name (named lambda: `func my_lambda(x): ...`)
+            if let Some(name) = node.child_by_field_name("name")
+                .or_else(|| find_child_kind(node, "name"))
+            {
+                push_node(&name, TT_FUNCTION, out);
+            }
+            // Parameters are highlighted by the "parameters" branch below via recursion.
+        }
         "parameters" => {
             for i in 0..node.child_count() {
                 let Some(child) = node.child(i) else { continue };
@@ -212,6 +221,16 @@ mod tests {
     fn variable_gets_variable_token() {
         let src = "var my_var: int = 0\n";
         assert!(token_types_in(src).contains(&TT_VARIABLE));
+    }
+
+    #[test]
+    fn lambda_parameter_gets_parameter_token() {
+        // LAB-694: lambda `func(x: int): ...` — x should get a parameter token.
+        let src = "class_name T\nfunc _ready():\n\tvar f = func(x: int): return x\n";
+        assert!(
+            token_types_in(src).contains(&TT_PARAMETER),
+            "lambda parameter should emit TT_PARAMETER"
+        );
     }
 
     #[test]
