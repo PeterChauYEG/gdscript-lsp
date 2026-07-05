@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use gdscript_api_db::ApiDb;
 use gdscript_parser::ParsedDocument;
 use tower_lsp::lsp_types::Diagnostic;
@@ -14,6 +16,9 @@ pub fn check_type_mismatches(doc: &ParsedDocument, api_db: &ApiDb) -> Vec<Diagno
     let source = doc.source.as_bytes();
     let root = doc.tree.root_node();
 
+    // Collect declared types for reassignment checking.
+    let declared_types = collect_declared_types(&root, source);
+
     for i in 0..root.child_count() {
         let Some(node) = root.child(i) else { continue };
         match node.kind() {
@@ -23,11 +28,102 @@ pub fn check_type_mismatches(doc: &ParsedDocument, api_db: &ApiDb) -> Vec<Diagno
             "function_definition" => {
                 check_function(&node, source, api_db, &mut out);
             }
+            "expression_statement" => {
+                check_reassignment(&node, source, api_db, &declared_types, &mut out);
+            }
             _ => {}
         }
     }
 
     out
+}
+
+/// Collect `var name: Type` declarations at the top level of a script.
+fn collect_declared_types<'a>(
+    root: &tree_sitter::Node,
+    source: &'a [u8],
+) -> HashMap<String, &'a str> {
+    let mut map = HashMap::new();
+    for i in 0..root.child_count() {
+        let Some(node) = root.child(i) else { continue };
+        if node.kind() == "variable_statement" {
+            if let (Some(name), Some(ty)) =
+                (var_name_text(&node, source), declared_var_type(&node, source))
+            {
+                map.insert(name.to_owned(), ty);
+            }
+        }
+    }
+    map
+}
+
+/// Get the `name` child text of a `variable_statement`.
+fn var_name_text<'a>(stmt: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
+    (0..stmt.child_count())
+        .filter_map(|i| stmt.child(i))
+        .find(|n| n.kind() == "name")
+        .and_then(|n| n.utf8_text(source).ok())
+}
+
+/// Check `x = literal` against the declared type of `x`.
+fn check_reassignment(
+    stmt: &tree_sitter::Node,
+    source: &[u8],
+    api_db: &ApiDb,
+    declared_types: &HashMap<String, &str>,
+    out: &mut Vec<Diagnostic>,
+) {
+    let assignment = match (0..stmt.child_count())
+        .filter_map(|i| stmt.child(i))
+        .find(|n| n.kind() == "assignment")
+    {
+        Some(a) => a,
+        None => return,
+    };
+
+    // LHS must be a bare identifier.
+    let lhs = match (0..assignment.child_count())
+        .filter_map(|i| assignment.child(i))
+        .find(|n| n.is_named() && n.kind() == "identifier")
+    {
+        Some(n) => n,
+        None => return,
+    };
+
+    let var_name = match lhs.utf8_text(source) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    let declared = match declared_types.get(var_name) {
+        Some(t) => *t,
+        None => return,
+    };
+
+    // RHS is the first named node after `=`.
+    let mut after_eq = false;
+    let rhs = (0..assignment.child_count()).find_map(|i| {
+        let child = assignment.child(i)?;
+        if child.kind() == "=" {
+            after_eq = true;
+            return None;
+        }
+        if after_eq && child.is_named() {
+            return Some(child);
+        }
+        None
+    });
+
+    let Some(rhs) = rhs else { return };
+    let Some(inferred) = infer_literal_type(&rhs) else { return };
+
+    if !types_compatible(declared, inferred, api_db) {
+        out.push(error_diag(
+            node_range(&rhs),
+            "E0003",
+            format!("Cannot assign `{inferred}` to variable of type `{declared}`"),
+        ));
+    }
 }
 
 /// Check `var x: Type = literal` for type mismatches.
@@ -97,12 +193,33 @@ fn check_returns_in_body(
             "return_statement" => {
                 check_return_value(&stmt, ret_type, source, api_db, out);
             }
-            "if_statement" | "while_statement" | "for_statement" | "match_statement" => {
-                // Recurse into nested bodies
+            "if_statement" | "while_statement" | "for_statement" => {
+                // Direct body children.
                 for j in 0..stmt.child_count() {
                     let Some(child) = stmt.child(j) else { continue };
                     if child.kind() == "body" {
                         check_returns_in_body(&child, ret_type, source, api_db, out);
+                    }
+                }
+            }
+            "match_statement" => {
+                // match_statement → match_body → pattern_section → body
+                for j in 0..stmt.child_count() {
+                    let Some(match_body) = stmt.child(j) else { continue };
+                    if match_body.kind() != "match_body" {
+                        continue;
+                    }
+                    for k in 0..match_body.child_count() {
+                        let Some(section) = match_body.child(k) else { continue };
+                        if section.kind() != "pattern_section" {
+                            continue;
+                        }
+                        for l in 0..section.child_count() {
+                            let Some(body) = section.child(l) else { continue };
+                            if body.kind() == "body" {
+                                check_returns_in_body(&body, ret_type, source, api_db, out);
+                            }
+                        }
                     }
                 }
             }
@@ -279,6 +396,70 @@ mod tests {
     #[test]
     fn return_in_if_branch_checked() {
         let src = "func foo() -> int:\n\tif true:\n\t\treturn \"bad\"\n";
+        assert!(codes(src).contains(&"E0003".to_owned()));
+    }
+
+    // --- reassignment ---
+
+    #[test]
+    fn reassignment_wrong_type_is_error() {
+        let src = "var x: int = 1\nx = \"bad\"\n";
+        assert!(codes(src).contains(&"E0003".to_owned()));
+    }
+
+    #[test]
+    fn reassignment_same_type_is_ok() {
+        let src = "var x: int = 1\nx = 2\n";
+        assert!(codes(src).is_empty());
+    }
+
+    #[test]
+    fn reassignment_undeclared_var_no_diag() {
+        // No `var y: int` declaration — can't check, should be silent.
+        let src = "y = \"bad\"\n";
+        assert!(codes(src).is_empty());
+    }
+
+    // --- non-literal RHS is silently skipped ---
+
+    #[test]
+    fn expression_rhs_is_silently_skipped() {
+        // Intentional: we don't infer types for non-literal RHS, so no E0003.
+        let src = "var x: int = get_node(\"/root\")\n";
+        assert!(codes(src).is_empty());
+    }
+
+    // --- nested control flow ---
+
+    #[test]
+    fn return_in_nested_while_checked() {
+        let src = "func foo() -> int:\n\twhile true:\n\t\treturn \"bad\"\n";
+        assert!(codes(src).contains(&"E0003".to_owned()));
+    }
+
+    #[test]
+    fn return_in_match_branch_checked() {
+        let src = "func foo() -> int:\n\tmatch 1:\n\t\t1:\n\t\t\treturn \"bad\"\n";
+        assert!(codes(src).contains(&"E0003".to_owned()));
+    }
+
+    #[test]
+    fn correct_return_in_match_branch_no_diag() {
+        let src = "func foo() -> int:\n\tmatch 1:\n\t\t1:\n\t\t\treturn 42\n";
+        assert!(codes(src).is_empty());
+    }
+
+    // --- multiple return statements ---
+
+    #[test]
+    fn multiple_returns_all_correct() {
+        let src = "func foo(x: int) -> int:\n\tif x > 0:\n\t\treturn 1\n\treturn 0\n";
+        assert!(codes(src).is_empty());
+    }
+
+    #[test]
+    fn multiple_returns_one_wrong_type() {
+        let src = "func foo(x: int) -> int:\n\tif x > 0:\n\t\treturn \"bad\"\n\treturn 0\n";
         assert!(codes(src).contains(&"E0003".to_owned()));
     }
 }

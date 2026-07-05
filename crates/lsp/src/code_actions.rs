@@ -287,4 +287,98 @@ mod tests {
         });
         assert!(!has_type_action);
     }
+
+    // --- diagnostic codes with no fix offered ---
+
+    #[test]
+    fn no_action_for_w0003_unreachable_code() {
+        let src = "func foo():\n\treturn\n\tvar x = 1\n";
+        let diags = vec![diag("W0003", 2)];
+        let range = Range {
+            start: Position { line: 2, character: 0 },
+            end: Position { line: 2, character: 10 },
+        };
+        let actions = code_actions_for(&uri(), src, &range, &diags);
+        let has_fix = actions.iter().any(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().map_or(false, |ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("W0003".to_owned())))))
+        });
+        assert!(!has_fix, "W0003 should not produce a quick-fix action");
+    }
+
+    #[test]
+    fn no_action_for_e0002_wrong_arg_count() {
+        let src = "func foo(a: int):\n\tpass\n";
+        let diags = vec![diag("E0002", 0)];
+        let range = Range {
+            start: Position { line: 0, character: 0 },
+            end: Position { line: 0, character: 10 },
+        };
+        let actions = code_actions_for(&uri(), src, &range, &diags);
+        let has_fix = actions.iter().any(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().map_or(false, |ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("E0002".to_owned())))))
+        });
+        assert!(!has_fix, "E0002 should not produce a quick-fix action");
+    }
+
+    #[test]
+    fn no_action_for_e0003_type_mismatch() {
+        let src = "var x: int = \"oops\"\n";
+        let diags = vec![diag("E0003", 0)];
+        let range = Range {
+            start: Position { line: 0, character: 0 },
+            end: Position { line: 0, character: 20 },
+        };
+        let actions = code_actions_for(&uri(), src, &range, &diags);
+        let has_fix = actions.iter().any(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().map_or(false, |ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("E0003".to_owned())))))
+        });
+        assert!(!has_fix, "E0003 should not produce a quick-fix action");
+    }
+
+    // --- multiple diagnostics on same line → multiple actions ---
+
+    #[test]
+    fn multiple_diags_produce_multiple_actions() {
+        let src = "var x = 1\nfunc foo() -> int:\n\tvar y = 2\n";
+        let diags = vec![diag("W0001", 0), diag("W0002", 2)];
+        let range = Range {
+            start: Position { line: 0, character: 0 },
+            end: Position { line: 2, character: 10 },
+        };
+        let actions = code_actions_for(&uri(), src, &range, &diags);
+        let fix_count = actions
+            .iter()
+            .filter(|a| matches!(a, CodeActionOrCommand::CodeAction(_)))
+            .count();
+        assert!(fix_count >= 2, "expected at least two actions, got {fix_count}");
+    }
+
+    // --- add_return_action new_text content ---
+
+    #[test]
+    fn add_return_action_inserts_correct_text() {
+        let src = "func foo() -> int:\n\tvar x = 1\n";
+        let diags = vec![diag("W0002", 1)];
+        let range = Range {
+            start: Position { line: 1, character: 0 },
+            end: Position { line: 1, character: 10 },
+        };
+        let actions = code_actions_for(&uri(), src, &range, &diags);
+        let inserted: Vec<_> = actions
+            .iter()
+            .filter_map(|a| {
+                if let CodeActionOrCommand::CodeAction(ca) = a {
+                    ca.edit.as_ref()?.changes.as_ref()?.values().next().map(|edits| {
+                        edits.iter().map(|e| e.new_text.as_str()).collect::<Vec<_>>().join("")
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            inserted.iter().any(|t| t.contains("return")),
+            "expected inserted text to contain 'return', got: {inserted:?}"
+        );
+    }
 }

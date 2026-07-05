@@ -115,4 +115,47 @@ mod tests {
         let edits = diff_to_edits(old, new);
         assert!(!edits.is_empty());
     }
+
+    // --- format_document async path ---
+
+    #[tokio::test]
+    async fn binary_not_found_returns_none() {
+        let result = format_document("var x = 1\n", "/nonexistent/gdformat").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn binary_exits_nonzero_returns_none() {
+        // /bin/false always exits with code 1.
+        let result = format_document("var x = 1\n", "/bin/false").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn binary_outputs_invalid_utf8_returns_none() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake_gdformat.py");
+        std::fs::write(
+            &script,
+            "#!/usr/bin/env python3\nimport sys\nsys.stdout.buffer.write(b'\\xff\\xfe')\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let result = format_document("var x = 1\n", script.to_str().unwrap()).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn binary_echoes_input_returns_empty_edits() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake_gdformat.sh");
+        // cat reads stdin and writes it back unchanged.
+        std::fs::write(&script, "#!/bin/sh\ncat\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let src = "var x = 1\n";
+        let result = format_document(src, script.to_str().unwrap()).await;
+        assert_eq!(result, Some(vec![]));
+    }
 }

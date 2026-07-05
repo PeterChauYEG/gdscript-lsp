@@ -60,6 +60,9 @@ url = "2"
 # directory traversal
 walkdir = "2"
 
+# test utilities
+tempfile = "3"
+
 [profile.release]
 strip = true
 lto = true
