@@ -7,6 +7,7 @@ use crate::diagnostics::{Diagnostic, Severity};
 /// - W0002: function with declared return type missing a return on some path
 /// - W0003: unreachable code after return/break/continue
 /// - W0004: file missing class_name declaration (plugin.gd exempt)
+/// - W0005: match statement missing enum variants (non-exhaustive)
 #[must_use]
 pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
     let mut out = Vec::new();
@@ -15,6 +16,9 @@ pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
 
     let mut has_class_name = false;
     let mut is_editor_plugin = false;
+
+    // Build a map of enum_name → Vec<variant_name> for exhaustiveness checks.
+    let enum_map = collect_enum_definitions(&root, source);
 
     for i in 0..root.child_count() {
         let Some(node) = root.child(i) else { continue };
@@ -28,7 +32,10 @@ pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
                     }
                 }
             }
-            "function_definition" => lint_function(&node, source, &mut out),
+            "function_definition" => {
+                lint_function(&node, source, &mut out);
+                lint_match_exhaustiveness_in_func(&node, source, &enum_map, &mut out);
+            }
             _ => {}
         }
     }
@@ -46,6 +53,162 @@ pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
     }
 
     out
+}
+
+/// Collect all `enum MyEnum { A, B, C }` definitions at file scope.
+/// Returns a map from enum name → list of variant name strings.
+fn collect_enum_definitions(
+    root: &tree_sitter::Node,
+    source: &[u8],
+) -> std::collections::HashMap<String, Vec<String>> {
+    let mut map = std::collections::HashMap::new();
+    for i in 0..root.child_count() {
+        let Some(node) = root.child(i) else { continue };
+        if node.kind() != "enum_definition" {
+            continue;
+        }
+        // Named enum: `enum Dir { UP, DOWN }` — anonymous enums are ignored.
+        let name_node = (0..node.child_count())
+            .filter_map(|j| node.child(j))
+            .find(|n| n.kind() == "name");
+        let Some(name_node) = name_node else { continue };
+        let Ok(enum_name) = name_node.utf8_text(source) else { continue };
+
+        let mut variants = Vec::new();
+        for j in 0..node.child_count() {
+            let Some(child) = node.child(j) else { continue };
+            if child.kind() == "enumerator_list" {
+                for k in 0..child.child_count() {
+                    let Some(enumerator) = child.child(k) else { continue };
+                    if enumerator.kind() == "enumerator" {
+                        if let Some(ident) = (0..enumerator.child_count())
+                            .filter_map(|m| enumerator.child(m))
+                            .find(|n| n.is_named())
+                        {
+                            if let Ok(v) = ident.utf8_text(source) {
+                                variants.push(v.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map.insert(enum_name.to_owned(), variants);
+    }
+    map
+}
+
+/// Check all `match` statements inside a function for non-exhaustive enum coverage.
+fn lint_match_exhaustiveness_in_func(
+    func: &tree_sitter::Node,
+    source: &[u8],
+    enum_map: &std::collections::HashMap<String, Vec<String>>,
+    out: &mut Vec<Diagnostic>,
+) {
+    let Some(body) = (0..func.child_count())
+        .filter_map(|i| func.child(i))
+        .find(|n| n.kind() == "body")
+    else {
+        return;
+    };
+    for i in 0..body.child_count() {
+        let Some(stmt) = body.child(i) else { continue };
+        if stmt.kind() == "match_statement" {
+            check_match_exhaustiveness(&stmt, source, enum_map, out);
+        }
+    }
+}
+
+/// Check a single `match_statement` for missing enum variants.
+///
+/// Strategy: look at all `pattern_section` children. If any pattern is a bare
+/// `_` identifier (wildcard arm), the match is trivially exhaustive — skip.
+/// Otherwise, collect all patterns of the form `EnumName.VARIANT`. If they all
+/// share the same enum name AND that enum exists in `enum_map`, warn about any
+/// variants that are not covered.
+fn check_match_exhaustiveness(
+    match_stmt: &tree_sitter::Node,
+    source: &[u8],
+    enum_map: &std::collections::HashMap<String, Vec<String>>,
+    out: &mut Vec<Diagnostic>,
+) {
+    let Some(match_body) = match_stmt.child_by_field_name("body")
+        .or_else(|| (0..match_stmt.child_count()).filter_map(|i| match_stmt.child(i)).find(|n| n.kind() == "match_body"))
+    else {
+        return;
+    };
+
+    // Gather all pattern_section nodes.
+    let sections: Vec<tree_sitter::Node> = (0..match_body.child_count())
+        .filter_map(|i| match_body.child(i))
+        .filter(|n| n.kind() == "pattern_section")
+        .collect();
+
+    // If any pattern is a wildcard `_`, the match is exhaustive.
+    let has_wildcard = sections.iter().any(|sec| {
+        (0..sec.child_count())
+            .filter_map(|i| sec.child(i))
+            .any(|p| {
+                (p.kind() == "identifier" && p.utf8_text(source).ok() == Some("_"))
+                    || p.kind() == "pattern_open_ending"
+            })
+    });
+    if has_wildcard {
+        return;
+    }
+
+    // Collect all `EnumName.VARIANT` member-access patterns.
+    let mut enum_name: Option<String> = None;
+    let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for sec in &sections {
+        for i in 0..sec.child_count() {
+            let Some(pattern) = sec.child(i) else { continue };
+            // A member access pattern looks like `identifier "." identifier`.
+            if pattern.kind() == "attribute" || pattern.kind() == "member_access" {
+                // Try to extract `lhs.rhs` from the node text.
+                if let Ok(text) = pattern.utf8_text(source) {
+                    if let Some(dot) = text.find('.') {
+                        let lhs = &text[..dot];
+                        let rhs = &text[dot + 1..];
+                        if let Some(ref en) = enum_name {
+                            if en == lhs {
+                                covered.insert(rhs.to_owned());
+                            }
+                        } else if enum_map.contains_key(lhs) {
+                            enum_name = Some(lhs.to_owned());
+                            covered.insert(rhs.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let Some(enum_name) = enum_name else { return };
+    let Some(all_variants) = enum_map.get(&enum_name) else { return };
+
+    let missing: Vec<&String> =
+        all_variants.iter().filter(|v| !covered.contains(*v)).collect();
+
+    if !missing.is_empty() {
+        let start = match_stmt.start_position();
+        let end = match_stmt.end_position();
+        let missing_list: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
+        out.push(Diagnostic {
+            line: start.row as u32,
+            col: start.column as u32,
+            end_line: end.row as u32,
+            end_col: end.column as u32,
+            severity: Severity::Warning,
+            code: Some("W0005".to_owned()),
+            message: format!(
+                "Non-exhaustive match on '{}': missing variants: {}",
+                enum_name,
+                missing_list.join(", ")
+            ),
+        });
+    }
 }
 
 fn lint_function(func: &tree_sitter::Node, source: &[u8], out: &mut Vec<Diagnostic>) {
@@ -330,5 +493,34 @@ mod tests {
     fn editor_plugin_exempt_from_class_name_warning() {
         let src = "@tool\nextends EditorPlugin\nfunc _enter_tree():\n\tpass\n";
         assert!(!codes(src).contains(&"W0004".to_owned()));
+    }
+
+    // --- match exhaustiveness (W0005) ---
+
+    #[test]
+    fn match_exhaustiveness_warns_when_variant_missing() {
+        let src = "class_name T\nenum Dir { UP, DOWN, LEFT }\nfunc go(d):\n\tmatch d:\n\t\tDir.UP:\n\t\t\tpass\n\t\tDir.DOWN:\n\t\t\tpass\n";
+        assert!(
+            codes(src).contains(&"W0005".to_owned()),
+            "should warn about missing LEFT"
+        );
+    }
+
+    #[test]
+    fn match_exhaustiveness_no_warn_when_all_covered() {
+        let src = "class_name T\nenum Dir { UP, DOWN }\nfunc go(d):\n\tmatch d:\n\t\tDir.UP:\n\t\t\tpass\n\t\tDir.DOWN:\n\t\t\tpass\n";
+        assert!(
+            !codes(src).contains(&"W0005".to_owned()),
+            "all variants covered — no warning"
+        );
+    }
+
+    #[test]
+    fn match_exhaustiveness_no_warn_with_wildcard() {
+        let src = "class_name T\nenum Dir { UP, DOWN, LEFT }\nfunc go(d):\n\tmatch d:\n\t\tDir.UP:\n\t\t\tpass\n\t\t_:\n\t\t\tpass\n";
+        assert!(
+            !codes(src).contains(&"W0005".to_owned()),
+            "wildcard arm present — exhaustive"
+        );
     }
 }

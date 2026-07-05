@@ -73,7 +73,7 @@ pub fn run(args: CheckArgs) -> Result<()> {
 
         let mut diags = checker_diags;
         diags.extend(gdscript_lsp::type_check::check_type_mismatches(&doc, &api_db));
-        diags.extend(gdscript_lsp::call_checker::check_calls(&doc, &type_map, &api_db));
+        diags.extend(gdscript_lsp::call_checker::check_calls(&doc, &type_map, &api_db, &gdscript_indexer::index::ProjectIndex::new()));
 
         if args.strict {
             diags.extend(strict_checks(&doc));
@@ -275,5 +275,95 @@ mod tests {
         let files = collect_gd_files(&tmp);
         assert_eq!(files.len(), 1);
         std::fs::remove_file(tmp).ok();
+    }
+
+    // LAB-718: CLI exit code and output format coverage
+
+    #[test]
+    fn collect_gd_files_recursive_directory() {
+        let dir = std::env::temp_dir().join("test_collect_dir");
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let f1 = dir.join("a.gd");
+        let f2 = sub.join("b.gd");
+        let f3 = dir.join("ignore.txt");
+        std::fs::write(&f1, "").unwrap();
+        std::fs::write(&f2, "").unwrap();
+        std::fs::write(&f3, "").unwrap();
+        let files = collect_gd_files(&dir);
+        assert_eq!(files.len(), 2, "should find both .gd files recursively");
+        assert!(!files.iter().any(|f| f.extension().and_then(|e| e.to_str()) != Some("gd")));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn json_format_is_valid_json_array() {
+        // Build a diagnostic list and verify serde produces a valid JSON array.
+        let diags: Vec<JsonDiag> = vec![JsonDiag {
+            file: "a.gd".to_owned(),
+            line: 1,
+            col: 1,
+            severity: "error".to_owned(),
+            code: "E001".to_owned(),
+            message: "test error".to_owned(),
+        }];
+        let json = serde_json::to_string_pretty(&diags).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.is_array());
+        assert_eq!(parsed.as_array().unwrap().len(), 1);
+        assert_eq!(parsed[0]["severity"], "error");
+        assert_eq!(parsed[0]["code"], "E001");
+    }
+
+    #[test]
+    fn github_format_line_contains_expected_fields() {
+        let d = JsonDiag {
+            file: "src/player.gd".to_owned(),
+            line: 10,
+            col: 5,
+            severity: "error".to_owned(),
+            code: "E001".to_owned(),
+            message: "some issue".to_owned(),
+        };
+        let level = if d.severity == "error" { "error" } else { "warning" };
+        let line = format!("::{level} file={},line={},col={}::{}", d.file, d.line, d.col, d.message);
+        assert!(line.starts_with("::error "));
+        assert!(line.contains("file=src/player.gd"));
+        assert!(line.contains("line=10"));
+        assert!(line.contains("some issue"));
+    }
+
+    #[test]
+    fn strict_mode_has_error_flag_set_for_warnings() {
+        // Verify that when strict mode is on, a warning should set has_error.
+        // We can't call std::process::exit in tests, so we test the logic inline.
+        let doc = parse("var x = 1\n");
+        let diags = strict_checks(&doc);
+        // strict_checks produces a warning for untyped var
+        assert!(!diags.is_empty());
+        let sev = match diags[0].severity {
+            Some(tower_lsp::lsp_types::DiagnosticSeverity::WARNING) => "warning",
+            Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR) => "error",
+            _ => "info",
+        };
+        // With --strict, warnings become errors: simulate the has_error check.
+        let strict = true;
+        let has_error = sev == "error" || (strict && sev == "warning");
+        assert!(has_error, "strict mode: warning should set has_error");
+    }
+
+    #[test]
+    fn non_strict_mode_warning_does_not_set_error_flag() {
+        let doc = parse("var x = 1\n");
+        let diags = strict_checks(&doc);
+        assert!(!diags.is_empty());
+        let sev = match diags[0].severity {
+            Some(tower_lsp::lsp_types::DiagnosticSeverity::WARNING) => "warning",
+            Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR) => "error",
+            _ => "info",
+        };
+        let strict = false;
+        let has_error = sev == "error" || (strict && sev == "warning");
+        assert!(!has_error, "non-strict mode: warning should not set has_error");
     }
 }

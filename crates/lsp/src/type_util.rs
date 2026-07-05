@@ -26,6 +26,12 @@ pub fn types_compatible(expected: &str, actual: &str, api_db: &ApiDb) -> bool {
     if expected == "Variant" {
         return true;
     }
+    // Array[T] is compatible with plain Array (LAB-692)
+    let base_expected = expected.split('[').next().unwrap_or(expected);
+    let base_actual = actual.split('[').next().unwrap_or(actual);
+    if base_expected == base_actual {
+        return true;
+    }
     if api_db.get_class(expected).is_some() && api_db.get_class(actual).is_some() {
         return api_db.is_subclass(actual, expected);
     }
@@ -118,5 +124,33 @@ mod tests {
         let d = db();
         // Node2D inherits Node — Node2D is a subclass of Node
         assert!(types_compatible("Node", "Node2D", &d));
+    }
+
+    #[test]
+    fn array_generic_compatible_with_plain_array() {
+        let d = db();
+        // Array[Node2D] is compatible with Array (LAB-692)
+        assert!(types_compatible("Array", "Array[Node2D]", &d));
+        assert!(types_compatible("Array[Node2D]", "Array", &d));
+    }
+
+    #[test]
+    fn same_array_generic_compatible() {
+        let d = db();
+        assert!(types_compatible("Array[int]", "Array[int]", &d));
+    }
+
+    // LAB-693: Dictionary[K, V] generic type tracking
+    #[test]
+    fn dict_generic_compatible_with_plain_dict() {
+        let d = db();
+        assert!(types_compatible("Dictionary", "Dictionary[String, int]", &d));
+        assert!(types_compatible("Dictionary[String, int]", "Dictionary", &d));
+    }
+
+    #[test]
+    fn same_dict_generic_compatible() {
+        let d = db();
+        assert!(types_compatible("Dictionary[String, int]", "Dictionary[String, int]", &d));
     }
 }
