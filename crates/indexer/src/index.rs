@@ -10,6 +10,8 @@ use crate::error::IndexerError;
 pub struct ProjectIndex {
     /// Maps `class_name` declarations to the file that declares them.
     pub class_names: HashMap<String, PathBuf>,
+    /// Maps `class_name` → what it `extends` (direct parent only).
+    pub class_extends: HashMap<String, String>,
     /// Maps file paths to their top-level symbol declarations.
     pub file_symbols: HashMap<PathBuf, Vec<SymbolDef>>,
     /// Autoloads from project.godot: singleton name → absolute script path.
@@ -25,6 +27,36 @@ impl ProjectIndex {
     pub fn new() -> Self {
         Self::default()
     }
+}
+
+/// Extract the parent class from `extends SomeClass` in a GDScript source.
+#[must_use]
+pub fn extract_extends(source: &str) -> Option<String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_gdscript::LANGUAGE.into()).ok()?;
+    let tree = parser.parse(source, None)?;
+    let root = tree.root_node();
+    let bytes = source.as_bytes();
+
+    for i in 0..root.child_count() {
+        let Some(node) = root.child(i) else { continue };
+        if node.kind() == "extends_statement" {
+            // First named child after `extends` keyword.
+            for j in 0..node.child_count() {
+                let Some(child) = node.child(j) else { continue };
+                if child.kind() == "type" {
+                    // The type node contains an identifier.
+                    for k in 0..child.child_count() {
+                        let Some(ident) = child.child(k) else { continue };
+                        if ident.is_named() {
+                            return ident.utf8_text(bytes).ok().map(str::to_owned);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Extract the `class_name` declared in a GDScript source, if any.
@@ -85,6 +117,9 @@ pub fn index_workspace(root: &Path) -> Result<ProjectIndex, IndexerError> {
                 let Ok(source) = std::fs::read_to_string(path) else { continue };
 
                 if let Some(class_name) = extract_class_name(&source) {
+                    if let Some(parent) = extract_extends(&source) {
+                        index.class_extends.insert(class_name.clone(), parent);
+                    }
                     index.class_names.insert(class_name, path.to_path_buf());
                 }
 

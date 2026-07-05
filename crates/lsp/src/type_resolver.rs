@@ -116,6 +116,113 @@ fn type_ident<'a>(type_node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a
     None
 }
 
+/// Resolve the Godot class name for a `$NodePath` expression.
+///
+/// `node_text` is the raw source text of the expression (e.g. `"$Sprite2D"` or
+/// `"$UI/HealthBar"`). The leading `$` is stripped and the last path component
+/// is used as the lookup key in `scene_map`, which maps node names to their
+/// Godot class names. Returns `Some(class_name)` when found.
+///
+/// # LAB-696
+#[must_use]
+pub fn resolve_dollar_path(
+    node_text: &str,
+    scene_map: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let path = node_text.strip_prefix('$').unwrap_or(node_text);
+    let simple = path.split('/').next_back().unwrap_or(path);
+    scene_map.get(simple).cloned()
+}
+
+/// Resolve the narrowed type produced by an `expr as TypeName` cast expression.
+///
+/// Returns `Some(type_name)` when `node` is a `cast_expression` node and its
+/// right-hand type child can be read from `source`. The returned string is the
+/// bare identifier text of the target type (e.g. `"Sprite2D"`).
+///
+/// # LAB-708 / F-1
+#[must_use]
+pub fn resolve_as_cast(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
+    if node.kind() != "cast_expression" {
+        return None;
+    }
+    // tree-sitter-gdscript grammar: cast_expression has children
+    //   <expr>  "as"  <type>
+    // The type node (kind "type") is the last named child after the "as" keyword.
+    let mut found_as = false;
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if !found_as {
+            if child.kind() == "as" {
+                found_as = true;
+            }
+            continue;
+        }
+        // First node after "as" — could be a "type" wrapper or a bare identifier.
+        if child.kind() == "type" {
+            return type_ident(&child, source).map(str::to_owned);
+        }
+        if child.is_named() {
+            return child.utf8_text(source).ok().map(str::to_owned);
+        }
+    }
+    None
+}
+
+/// Resolve the type of a ternary `x if cond else y` expression.
+///
+/// Returns `Some(type_name)` only when both branches resolve to the same type
+/// via `type_map`. When the branches differ or either is unknown, returns `None`.
+///
+/// # LAB-711 / F-4
+#[must_use]
+pub fn resolve_ternary_type(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    type_map: &TypeMap,
+) -> Option<String> {
+    if node.kind() != "if_expression" {
+        return None;
+    }
+    // tree-sitter-gdscript grammar for ternary:
+    //   if_expression: <value_if_true> "if" <condition> "else" <value_if_false>
+    // Named children (is_named == true, non-keyword) in order: true_branch, cond, false_branch.
+    let named_children: Vec<tree_sitter::Node> =
+        (0..node.child_count())
+            .filter_map(|i| node.child(i))
+            .filter(|c| c.is_named())
+            .collect();
+
+    // We expect at least 3 named children: true_expr, condition, false_expr.
+    if named_children.len() < 3 {
+        return None;
+    }
+
+    let true_branch = &named_children[0];
+    let false_branch = &named_children[2];
+
+    let resolve_branch = |branch: &tree_sitter::Node| -> Option<String> {
+        if branch.kind() == "identifier" {
+            let name = branch.utf8_text(source).ok()?;
+            return type_map.resolve(name).map(str::to_owned);
+        }
+        // For cast expressions nested in the branch, delegate.
+        if branch.kind() == "cast_expression" {
+            return resolve_as_cast(branch, source);
+        }
+        None
+    };
+
+    let true_ty = resolve_branch(true_branch)?;
+    let false_ty = resolve_branch(false_branch)?;
+
+    if true_ty == false_ty {
+        Some(true_ty)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gdscript_parser::parse::parse;
@@ -161,5 +268,43 @@ mod tests {
         let map = types("extends Node\nfunc _ready():\n\tvar label: Label\n");
         assert_eq!(map.resolve("label"), Some("Label"));
     }
-}
 
+    // --- LAB-696: $NodePath type inference ---
+
+    #[test]
+    fn resolve_dollar_path_simple() {
+        let mut scene_map = HashMap::new();
+        scene_map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
+        assert_eq!(
+            resolve_dollar_path("$Sprite2D", &scene_map),
+            Some("Sprite2D".to_owned())
+        );
+    }
+
+    #[test]
+    fn resolve_dollar_path_nested() {
+        let mut scene_map = HashMap::new();
+        scene_map.insert("HealthBar".to_owned(), "ProgressBar".to_owned());
+        assert_eq!(
+            resolve_dollar_path("$UI/HealthBar", &scene_map),
+            Some("ProgressBar".to_owned())
+        );
+    }
+
+    #[test]
+    fn resolve_dollar_path_missing_returns_none() {
+        let scene_map: HashMap<String, String> = HashMap::new();
+        assert!(resolve_dollar_path("$NonExistent", &scene_map).is_none());
+    }
+
+    #[test]
+    fn resolve_dollar_path_no_dollar_prefix() {
+        let mut scene_map = HashMap::new();
+        scene_map.insert("Label".to_owned(), "Label".to_owned());
+        // Should still work when the caller already stripped the `$`.
+        assert_eq!(
+            resolve_dollar_path("Label", &scene_map),
+            Some("Label".to_owned())
+        );
+    }
+}

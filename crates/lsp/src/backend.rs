@@ -6,13 +6,22 @@ use tokio::sync::RwLock;
 use tower_lsp::lsp_types::{
     CodeActionOrCommand, CodeActionParams, CompletionParams, CompletionResponse, Diagnostic,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    DidChangeWatchedFilesParams, FileSystemWatcher, GlobPattern, InitializeParams, InitializeResult,
-    InlayHint, InlayHintParams, Location, MessageType, Position, PrepareRenameResponse, Range,
-    ReferenceParams, Registration, RenameParams, ServerInfo, SignatureHelp, SignatureHelpParams,
-    SymbolInformation, SymbolKind, TextEdit, WatchKind, WorkspaceEdit, WorkspaceSymbolParams,
+    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentLink, DocumentLinkParams,
+    DocumentSymbolParams, DocumentSymbolResponse,
+    DocumentDiagnosticParams, FullDocumentDiagnosticReport, RelatedFullDocumentDiagnosticReport,
+    GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverParams, DidChangeWatchedFilesParams, FileSystemWatcher,
+    GlobPattern, InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location,
+    MessageType, Position, PrepareRenameResponse, Range, ReferenceParams, Registration,
+    RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
+    SemanticTokensResult, ServerInfo, SignatureHelp, SignatureHelpParams, SymbolInformation,
+    SymbolKind, TextEdit, WatchKind, WorkspaceEdit, WorkspaceSymbolParams,
 };
+use tower_lsp::lsp_types::request::{
+    GotoImplementationParams, GotoImplementationResponse,
+    GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
+};
+use tower_lsp::lsp_types::DocumentDiagnosticReportResult;
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
 use crate::{
@@ -97,7 +106,8 @@ impl Backend {
         let type_maps = self.type_maps.read().await;
         let empty = TypeMap::default();
         let type_map = type_maps.get(uri).unwrap_or(&empty);
-        let mut diags = check_calls(&doc, type_map, db);
+        let index = self.project_index.read().await;
+        let mut diags = check_calls(&doc, type_map, db, &index);
         diags.extend(check_type_mismatches(&doc, db));
         diags
     }
@@ -913,6 +923,168 @@ impl LanguageServer for Backend {
             changes: Some(changes),
             ..Default::default()
         }))
+    }
+
+    // --- textDocument/typeDefinition (LAB-701) ---
+    async fn goto_type_definition(
+        &self,
+        params: GotoTypeDefinitionParams,
+    ) -> Result<Option<GotoTypeDefinitionResponse>> {
+        let pos = &params.text_document_position_params.position;
+        let uri = &params.text_document_position_params.text_document.uri;
+
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let Some(word) = word_at(&source, pos.line, pos.character) else {
+            return Ok(None);
+        };
+
+        // Find the declared type of the symbol under cursor from the type map.
+        let type_maps = self.type_maps.read().await;
+        let type_name = type_maps
+            .get(uri)
+            .and_then(|m| m.resolve(word))
+            .map(str::to_owned);
+        drop(type_maps);
+
+        let Some(type_name) = type_name else { return Ok(None) };
+
+        let index = self.project_index.read().await;
+        let path = index
+            .class_names
+            .get(type_name.as_str())
+            .cloned();
+        drop(index);
+
+        let Some(path) = path else { return Ok(None) };
+        let Ok(target_uri) = tower_lsp::lsp_types::Url::from_file_path(&path) else {
+            return Ok(None);
+        };
+
+        Ok(Some(GotoTypeDefinitionResponse::Scalar(Location {
+            uri: target_uri,
+            range: Range {
+                start: Position { line: 0, character: 0 },
+                end: Position { line: 0, character: 0 },
+            },
+        })))
+    }
+
+    // --- textDocument/implementation (LAB-702) ---
+    async fn goto_implementation(
+        &self,
+        params: GotoImplementationParams,
+    ) -> Result<Option<GotoImplementationResponse>> {
+        let pos = &params.text_document_position_params.position;
+        let uri = &params.text_document_position_params.text_document.uri;
+
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let Some(word) = word_at(&source, pos.line, pos.character) else {
+            return Ok(None);
+        };
+
+        let index = self.project_index.read().await;
+        // Find all scripts whose class_extends matches the queried class name.
+        let locations: Vec<Location> = index
+            .class_extends
+            .iter()
+            .filter(|(_, parent)| parent.as_str() == word)
+            .filter_map(|(child_name, _)| {
+                let path = index.class_names.get(child_name)?;
+                let target_uri = tower_lsp::lsp_types::Url::from_file_path(path).ok()?;
+                Some(Location {
+                    uri: target_uri,
+                    range: Range {
+                        start: Position { line: 0, character: 0 },
+                        end: Position { line: 0, character: 0 },
+                    },
+                })
+            })
+            .collect();
+        drop(index);
+
+        if locations.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(GotoImplementationResponse::Array(locations)))
+        }
+    }
+
+    // --- textDocument/documentLink (LAB-704) ---
+    async fn document_link(
+        &self,
+        params: DocumentLinkParams,
+    ) -> Result<Option<Vec<DocumentLink>>> {
+        let uri = &params.text_document.uri;
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let root = self.workspace_root.read().await.clone();
+        let Some(root) = root else { return Ok(None) };
+
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else { return Ok(None) };
+        let links = crate::document_links::document_links(&doc, &root);
+        Ok(if links.is_empty() { None } else { Some(links) })
+    }
+
+    // --- textDocument/selectionRange (LAB-705) ---
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> Result<Option<Vec<SelectionRange>>> {
+        let uri = &params.text_document.uri;
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else { return Ok(None) };
+        let ranges = crate::selection_range::selection_ranges(&doc, &params.positions);
+        Ok(Some(ranges))
+    }
+
+    // --- textDocument/semanticTokens/full ---
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let uri = &params.text_document.uri;
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else { return Ok(None) };
+        let tokens = crate::semantic_tokens::semantic_tokens(&doc);
+        Ok(Some(SemanticTokensResult::Tokens(tokens)))
+    }
+
+    // --- textDocument/diagnostic pull model (LAB-707) ---
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> Result<DocumentDiagnosticReportResult> {
+        let uri = &params.text_document.uri;
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let source = source.unwrap_or_default();
+
+        let diagnostics = crate::diagnostics::compute_diagnostics(
+            uri,
+            &source,
+            &self.api_db,
+            &self.type_maps,
+            &self.project_index,
+        )
+        .await;
+
+        Ok(DocumentDiagnosticReportResult::Report(
+            tower_lsp::lsp_types::DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+                related_documents: None,
+                full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                    result_id: None,
+                    items: diagnostics,
+                },
+            })
+        ))
     }
 }
 

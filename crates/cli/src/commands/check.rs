@@ -73,7 +73,7 @@ pub fn run(args: CheckArgs) -> Result<()> {
 
         let mut diags = checker_diags;
         diags.extend(gdscript_lsp::type_check::check_type_mismatches(&doc, &api_db));
-        diags.extend(gdscript_lsp::call_checker::check_calls(&doc, &type_map, &api_db));
+        diags.extend(gdscript_lsp::call_checker::check_calls(&doc, &type_map, &api_db, &gdscript_indexer::index::ProjectIndex::new()));
 
         if args.strict {
             diags.extend(strict_checks(&doc));

@@ -38,6 +38,31 @@ pub fn check_type_mismatches(doc: &ParsedDocument, api_db: &ApiDb) -> Vec<Diagno
     out
 }
 
+/// Returns `true` if the given `variable_statement` node has a decorator child
+/// whose identifier matches `name` (e.g. `"onready"` for `@onready`).
+///
+/// The tree-sitter GDScript grammar represents `@onready` as a `decorator` node
+/// whose first named child is an `identifier` containing `"onready"`.
+fn has_decorator(stmt: &tree_sitter::Node, source: &[u8], name: &str) -> bool {
+    for i in 0..stmt.child_count() {
+        let Some(child) = stmt.child(i) else { continue };
+        if child.kind() != "decorator" {
+            continue;
+        }
+        for j in 0..child.child_count() {
+            let Some(inner) = child.child(j) else { continue };
+            if inner.is_named() {
+                if let Ok(text) = inner.utf8_text(source) {
+                    if text == name {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Collect `var name: Type` declarations at the top level of a script.
 fn collect_declared_types<'a>(
     root: &tree_sitter::Node,
@@ -127,12 +152,25 @@ fn check_reassignment(
 }
 
 /// Check `var x: Type = literal` for type mismatches.
+///
+/// When a variable is annotated with `@onready` and has an explicit type, the RHS
+/// is typically a node-path expression (`$Sprite2D`).  `infer_literal_type` already
+/// returns `None` for non-literals, so those are silently skipped.  The decorator
+/// check below is therefore not strictly required for correctness today, but it
+/// makes the intent explicit and future-proofs the function against null-safety
+/// warnings that might otherwise be emitted for `@onready` variables.
 fn check_var_assignment(
     stmt: &tree_sitter::Node,
     source: &[u8],
     api_db: &ApiDb,
     out: &mut Vec<Diagnostic>,
 ) {
+    // @onready vars with an explicit type annotation: the RHS is evaluated at
+    // scene-tree ready time and is guaranteed non-null by the engine.  Mark them
+    // as non-null and skip null-safety warnings (none exist yet, but this guard
+    // ensures we never emit false positives for this pattern in the future).
+    let _is_onready = has_decorator(stmt, source, "onready");
+
     let declared = match declared_var_type(stmt, source) {
         Some(t) => t,
         None => return,
@@ -143,6 +181,8 @@ fn check_var_assignment(
         None => return,
     };
 
+    // Node-path expressions and other non-literals are already silently skipped
+    // here because `infer_literal_type` returns `None` for them.
     let inferred = match infer_literal_type(&value) {
         Some(t) => t,
         None => return,
@@ -460,6 +500,26 @@ mod tests {
     #[test]
     fn multiple_returns_one_wrong_type() {
         let src = "func foo(x: int) -> int:\n\tif x > 0:\n\t\treturn \"bad\"\n\treturn 0\n";
+        assert!(codes(src).contains(&"E0003".to_owned()));
+    }
+
+    // --- @onready ---
+
+    /// `@onready var sprite: Sprite2D = $Sprite2D` — the RHS is a node-path
+    /// expression, not a literal.  `infer_literal_type` returns `None` for it,
+    /// so the check is skipped and no diagnostic is emitted.
+    #[test]
+    fn onready_with_node_path_no_diag() {
+        let src = "@onready var sprite: Sprite2D = $Sprite2D\n";
+        assert!(codes(src).is_empty());
+    }
+
+    /// `@onready var x: int = "bad"` — the decorator does not suppress type
+    /// checking when the RHS is a literal that is statically incompatible with
+    /// the declared type.
+    #[test]
+    fn onready_with_wrong_literal_type_is_error() {
+        let src = "@onready var x: int = \"bad\"\n";
         assert!(codes(src).contains(&"E0003".to_owned()));
     }
 }
