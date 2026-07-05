@@ -1,5 +1,6 @@
 use tower_lsp::lsp_types::{
-    CodeActionOptions, CodeActionProviderCapability, CompletionOptions, DiagnosticOptions,
+    CallHierarchyOptions, CallHierarchyServerCapability, CodeActionOptions,
+    CodeActionProviderCapability, CompletionOptions, DiagnosticOptions,
     DiagnosticServerCapabilities, DocumentLinkOptions, DocumentFormattingOptions,
     HoverProviderCapability, ImplementationProviderCapability, InlayHintOptions,
     InlayHintServerCapabilities, OneOf, RenameOptions, SelectionRangeProviderCapability,
@@ -103,6 +104,9 @@ pub fn server_capabilities() -> ServerCapabilities {
             workspace_diagnostics: false,
             work_done_progress_options: WorkDoneProgressOptions::default(),
         })),
+        call_hierarchy_provider: Some(CallHierarchyServerCapability::Options(
+            CallHierarchyOptions { work_done_progress_options: WorkDoneProgressOptions::default() },
+        )),
         ..Default::default()
     }
 }

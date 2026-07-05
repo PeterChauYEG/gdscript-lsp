@@ -21,6 +21,11 @@ use tower_lsp::lsp_types::request::{
     GotoImplementationParams, GotoImplementationResponse,
     GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
+use tower_lsp::lsp_types::{
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams,
+    CallHierarchyItem, CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams,
+    CallHierarchyPrepareParams,
+};
 use tower_lsp::lsp_types::DocumentDiagnosticReportResult;
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
@@ -1070,6 +1075,129 @@ impl LanguageServer for Backend {
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
 
+    // --- callHierarchy (LAB-706) ---
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> Result<Option<Vec<CallHierarchyItem>>> {
+        let pos = &params.text_document_position_params.position;
+        let uri = &params.text_document_position_params.text_document.uri;
+
+        let source = self.documents.read().await.get(uri).map(str::to_owned);
+        let Some(source) = source else { return Ok(None) };
+        let Some(word) = word_at(&source, pos.line, pos.character) else {
+            return Ok(None);
+        };
+
+        let doc_path = uri.to_file_path().unwrap_or_default();
+        let index = self.project_index.read().await;
+        let symbols = index.file_symbols.get(&doc_path);
+
+        let item = symbols
+            .and_then(|syms| {
+                syms.iter().find(|s| {
+                    s.name == word
+                        && matches!(s.kind, gdscript_core::symbol::SymbolKind::Function)
+                })
+            })
+            .map(|sym| {
+                let target_uri = tower_lsp::lsp_types::Url::from_file_path(&doc_path)
+                    .unwrap_or_else(|_| uri.clone());
+                let sym_range = Range {
+                    start: Position { line: sym.line, character: 0 },
+                    end: Position { line: sym.line, character: 0 },
+                };
+                CallHierarchyItem {
+                    name: sym.name.clone(),
+                    kind: SymbolKind::FUNCTION,
+                    tags: None,
+                    detail: None,
+                    uri: target_uri,
+                    range: sym_range,
+                    selection_range: sym_range,
+                    data: None,
+                }
+            });
+
+        Ok(item.map(|i| vec![i]))
+    }
+
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
+        let target_name = &params.item.name;
+        let index = self.project_index.read().await;
+
+        let mut calls: Vec<CallHierarchyIncomingCall> = Vec::new();
+
+        for (path, symbols) in &index.file_symbols {
+            let Ok(caller_uri) = tower_lsp::lsp_types::Url::from_file_path(path) else {
+                continue;
+            };
+            let Ok(source) = std::fs::read_to_string(path) else { continue };
+
+            // Find each function in this file and check if its body calls target_name.
+            for sym in symbols {
+                if sym.kind != gdscript_core::symbol::SymbolKind::Function {
+                    continue;
+                }
+                let call_ranges = find_call_sites_in_source(&source, target_name, sym.line);
+                if !call_ranges.is_empty() {
+                    let caller_range = Range {
+                        start: Position { line: sym.line, character: 0 },
+                        end: Position { line: sym.line, character: 0 },
+                    };
+                    calls.push(CallHierarchyIncomingCall {
+                        from: CallHierarchyItem {
+                            name: sym.name.clone(),
+                            kind: SymbolKind::FUNCTION,
+                            tags: None,
+                            detail: None,
+                            uri: caller_uri.clone(),
+                            range: caller_range,
+                            selection_range: caller_range,
+                            data: None,
+                        },
+                        from_ranges: call_ranges,
+                    });
+                }
+            }
+        }
+
+        Ok(if calls.is_empty() { None } else { Some(calls) })
+    }
+
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
+        let item = &params.item;
+        let Ok(path) = item.uri.to_file_path() else { return Ok(None) };
+        let Ok(source) = std::fs::read_to_string(&path) else { return Ok(None) };
+        let index = self.project_index.read().await;
+
+        // Collect all function names across the project for lookup.
+        let known_functions: std::collections::HashMap<String, (tower_lsp::lsp_types::Url, u32)> =
+            index
+                .file_symbols
+                .iter()
+                .flat_map(|(p, syms)| {
+                    let uri = tower_lsp::lsp_types::Url::from_file_path(p).ok();
+                    syms.iter()
+                        .filter(|s| s.kind == gdscript_core::symbol::SymbolKind::Function)
+                        .filter_map(move |s| {
+                            uri.clone().map(|u| (s.name.clone(), (u, s.line)))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+
+        let caller_start_line = item.range.start.line;
+        let outgoing = find_outgoing_calls_in_source(&source, caller_start_line, &known_functions);
+        Ok(if outgoing.is_empty() { None } else { Some(outgoing) })
+    }
+
     // --- textDocument/diagnostic pull model (LAB-707) ---
     async fn diagnostic(
         &self,
@@ -1249,6 +1377,113 @@ fn find_associated_scene<'a>(
     let dir = script_path.parent()?;
     let tscn = dir.join(format!("{stem}.tscn"));
     index.scenes.get(&tscn)
+}
+
+/// Find all call sites of `target_fn` inside the function starting at `fn_start_line`.
+/// Returns LSP ranges for each call site found.
+fn find_call_sites_in_source(source: &str, target_fn: &str, fn_start_line: u32) -> Vec<Range> {
+    let mut out = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let fn_start = fn_start_line as usize;
+
+    // Heuristic: the function body spans from fn_start until the next top-level function/class.
+    let fn_end = lines
+        .iter()
+        .enumerate()
+        .skip(fn_start + 1)
+        .find(|(_, l)| {
+            let t = l.trim_start();
+            t.starts_with("func ") || t.starts_with("class ") || t.starts_with("static func ")
+        })
+        .map_or(lines.len(), |(i, _)| i);
+
+    let call_pat = format!("{target_fn}(");
+    for (i, line) in lines[fn_start..fn_end].iter().enumerate() {
+        let line_idx = fn_start + i;
+        let mut start = 0usize;
+        while let Some(rel) = line[start..].find(&call_pat) {
+            let abs = start + rel;
+            let before_ok = abs == 0
+                || (!line.as_bytes()[abs - 1].is_ascii_alphanumeric()
+                    && line.as_bytes()[abs - 1] != b'_');
+            if before_ok {
+                let end = abs + target_fn.len();
+                out.push(Range {
+                    start: Position { line: line_idx as u32, character: abs as u32 },
+                    end: Position { line: line_idx as u32, character: end as u32 },
+                });
+            }
+            start = abs + 1;
+        }
+    }
+    out
+}
+
+/// Walk `source` looking for calls to any known function, starting from the
+/// function at `fn_start_line`. Returns outgoing `CallHierarchyOutgoingCall`s.
+fn find_outgoing_calls_in_source(
+    source: &str,
+    fn_start_line: u32,
+    known_fns: &std::collections::HashMap<String, (tower_lsp::lsp_types::Url, u32)>,
+) -> Vec<CallHierarchyOutgoingCall> {
+    let lines: Vec<&str> = source.lines().collect();
+    let fn_start = fn_start_line as usize;
+    let fn_end = lines
+        .iter()
+        .enumerate()
+        .skip(fn_start + 1)
+        .find(|(_, l)| {
+            let t = l.trim_start();
+            t.starts_with("func ") || t.starts_with("class ") || t.starts_with("static func ")
+        })
+        .map_or(lines.len(), |(i, _)| i);
+
+    let mut found: std::collections::HashMap<String, Vec<Range>> = std::collections::HashMap::new();
+    for (i, line) in lines[fn_start..fn_end].iter().enumerate() {
+        let line_idx = fn_start + i;
+        for (fn_name, _) in known_fns {
+            let call_pat = format!("{fn_name}(");
+            let mut start = 0usize;
+            while let Some(rel) = line[start..].find(&call_pat) {
+                let abs = start + rel;
+                let before_ok = abs == 0
+                    || (!line.as_bytes()[abs - 1].is_ascii_alphanumeric()
+                        && line.as_bytes()[abs - 1] != b'_');
+                if before_ok {
+                    let end = abs + fn_name.len();
+                    found.entry(fn_name.clone()).or_default().push(Range {
+                        start: Position { line: line_idx as u32, character: abs as u32 },
+                        end: Position { line: line_idx as u32, character: end as u32 },
+                    });
+                }
+                start = abs + 1;
+            }
+        }
+    }
+
+    found
+        .into_iter()
+        .filter_map(|(fn_name, ranges)| {
+            let (callee_uri, callee_line) = known_fns.get(&fn_name)?;
+            let callee_range = Range {
+                start: Position { line: *callee_line, character: 0 },
+                end: Position { line: *callee_line, character: 0 },
+            };
+            Some(CallHierarchyOutgoingCall {
+                to: CallHierarchyItem {
+                    name: fn_name,
+                    kind: SymbolKind::FUNCTION,
+                    tags: None,
+                    detail: None,
+                    uri: callee_uri.clone(),
+                    range: callee_range,
+                    selection_range: callee_range,
+                    data: None,
+                },
+                from_ranges: ranges,
+            })
+        })
+        .collect()
 }
 
 /// Parse `receiver.method(` from a line prefix, returning `(receiver, method)`.

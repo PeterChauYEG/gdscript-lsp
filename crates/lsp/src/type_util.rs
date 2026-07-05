@@ -139,4 +139,18 @@ mod tests {
         let d = db();
         assert!(types_compatible("Array[int]", "Array[int]", &d));
     }
+
+    // LAB-693: Dictionary[K, V] generic type tracking
+    #[test]
+    fn dict_generic_compatible_with_plain_dict() {
+        let d = db();
+        assert!(types_compatible("Dictionary", "Dictionary[String, int]", &d));
+        assert!(types_compatible("Dictionary[String, int]", "Dictionary", &d));
+    }
+
+    #[test]
+    fn same_dict_generic_compatible() {
+        let d = db();
+        assert!(types_compatible("Dictionary[String, int]", "Dictionary[String, int]", &d));
+    }
 }

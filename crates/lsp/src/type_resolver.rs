@@ -205,7 +205,67 @@ fn extract_body_var_types(body: &tree_sitter::Node, source: &[u8], out: &mut Has
         let Some(child) = body.child(i) else { continue };
         if child.kind() == "variable_statement" {
             extract_var_type(&child, source, out);
+            // LAB-709: infer subscript element type for `var x = arr[0]` where arr: Array[T]
+            infer_subscript_type(&child, source, out);
         }
+    }
+}
+
+/// If `stmt` is `var x = collection[idx]` with no explicit type annotation, and
+/// `collection` has a known `Array[T]` or `Dictionary[K, V]` type in `out`,
+/// infer the element type (T or V respectively) for `x`.
+fn infer_subscript_type(
+    stmt: &tree_sitter::Node,
+    source: &[u8],
+    out: &mut HashMap<String, String>,
+) {
+    // Skip if already has an explicit type or was resolved above.
+    let has_type = (0..stmt.child_count())
+        .filter_map(|i| stmt.child(i))
+        .any(|n| n.kind() == "type");
+    if has_type {
+        return;
+    }
+    let Some(name_node) = stmt.child_by_field_name("name") else { return };
+    let Ok(var_name) = name_node.utf8_text(source) else { return };
+    if out.contains_key(var_name) {
+        return;
+    }
+
+    let Some(rhs) = rhs_node(stmt) else { return };
+    // Subscript node: receiver "[" index "]"
+    if rhs.kind() != "subscript" {
+        return;
+    }
+    // First named child of subscript is the receiver.
+    let receiver_node = (0..rhs.child_count())
+        .filter_map(|i| rhs.child(i))
+        .find(|n| n.is_named());
+    let Some(receiver_node) = receiver_node else { return };
+    let Ok(receiver_name) = receiver_node.utf8_text(source) else { return };
+
+    let collection_type = out.get(receiver_name).cloned();
+    let Some(collection_type) = collection_type else { return };
+
+    // Extract element type from "Array[T]" or "Dictionary[K, V]" (last type arg).
+    if let Some(element_type) = extract_generic_element_type(&collection_type) {
+        out.insert(var_name.to_owned(), element_type);
+    }
+}
+
+/// Extract the element/value type from a generic type string.
+/// `"Array[Node2D]"` → `Some("Node2D")`
+/// `"Dictionary[String, int]"` → `Some("int")` (value type = last arg)
+#[must_use]
+pub fn extract_generic_element_type(type_name: &str) -> Option<String> {
+    let open = type_name.find('[')?;
+    let inner = type_name[open + 1..].trim_end_matches(']');
+    // For Dictionary[K, V], take the last comma-separated element.
+    let element = inner.split(',').next_back()?.trim();
+    if element.is_empty() {
+        None
+    } else {
+        Some(element.to_owned())
     }
 }
 
@@ -525,5 +585,26 @@ mod tests {
         assert!(resolve_as_cast(&root, doc.source.as_bytes()).is_none());
     }
 
+    // --- LAB-709: subscript access element type inference ---
 
+    #[test]
+    fn extract_generic_element_type_array() {
+        assert_eq!(
+            super::extract_generic_element_type("Array[Node2D]"),
+            Some("Node2D".to_owned())
+        );
+    }
+
+    #[test]
+    fn extract_generic_element_type_dict_value() {
+        assert_eq!(
+            super::extract_generic_element_type("Dictionary[String, int]"),
+            Some("int".to_owned())
+        );
+    }
+
+    #[test]
+    fn extract_generic_element_type_plain_type() {
+        assert_eq!(super::extract_generic_element_type("Node2D"), None);
+    }
 }
