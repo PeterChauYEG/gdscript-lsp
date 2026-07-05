@@ -522,4 +522,19 @@ mod tests {
         let src = "@onready var x: int = \"bad\"\n";
         assert!(codes(src).contains(&"E0003".to_owned()));
     }
+
+    // --- LAB-711: ternary expression type inference ---
+
+    /// Ternary `value if cond else other` — the result type is not inferred by
+    /// `check_type_mismatches` (the RHS node kind is `if_expression`, not a
+    /// literal). No false-positive diagnostic should be emitted.
+    #[test]
+    fn ternary_expr_no_false_positive() {
+        let src = "var x: int = 1 if true else 0\n";
+        // Ternary result type is not inferred — should not produce a diagnostic.
+        let db = db();
+        let doc = gdscript_parser::parse::parse(src).unwrap();
+        let diags = check_type_mismatches(&doc, &db);
+        assert!(diags.is_empty(), "unexpected diagnostic: {:?}", diags);
+    }
 }

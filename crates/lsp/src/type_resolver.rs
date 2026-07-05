@@ -64,9 +64,11 @@ fn extract_types_impl(doc: &ParsedDocument, scene_map: Option<&HashMap<String, S
             }
             "variable_statement" | "const_statement" => {
                 extract_var_type(&node, source, &mut map.types);
-                // LAB-700: also infer type from @onready + $NodePath when no explicit type
+                // LAB-700: infer @onready var x = $NodePath type from scene map
                 if let Some(sm) = scene_map {
-                    extract_onready_inferred_type(&node, source, sm, &mut map.types);
+                    if has_annotation(&node, source, "onready") {
+                        extract_onready_inferred_type(&node, source, sm, &mut map.types);
+                    }
                 }
             }
             "function_definition" => {
@@ -92,7 +94,7 @@ fn extract_onready_inferred_type(
     scene_map: &HashMap<String, String>,
     out: &mut HashMap<String, String>,
 ) {
-    // Only process variable_statement nodes.
+    // Only process variable_statement nodes (caller ensures @onready context).
     if node.kind() != "variable_statement" {
         return;
     }
@@ -100,20 +102,15 @@ fn extract_onready_inferred_type(
     if node.child_by_field_name("type").is_some() {
         return;
     }
-    // Must have @onready decorator.
-    if !node_has_decorator(node, source, "onready") {
-        return;
-    }
     // Get the variable name.
     let Some(name_node) = node.child_by_field_name("name") else { return };
     let Ok(name) = name_node.utf8_text(source) else { return };
-    // Already resolved — don't overwrite.
+    // Already resolved by explicit annotation — don't overwrite.
     if out.contains_key(name) {
         return;
     }
     // Find the RHS value (after `=`).
-    let rhs = rhs_node(node);
-    let Some(rhs) = rhs else { return };
+    let Some(rhs) = rhs_node(node) else { return };
     // The RHS must be a get_node expression (e.g. `$Sprite2D`).
     if rhs.kind() != "get_node" {
         return;
@@ -124,19 +121,21 @@ fn extract_onready_inferred_type(
     }
 }
 
-/// Returns `true` if `stmt` has a `decorator` child whose first named child
-/// text equals `name` (e.g. `"onready"` for `@onready`).
-fn node_has_decorator(stmt: &tree_sitter::Node, source: &[u8], name: &str) -> bool {
-    for i in 0..stmt.child_count() {
-        let Some(child) = stmt.child(i) else { continue };
-        if child.kind() != "decorator" {
-            continue;
-        }
-        for j in 0..child.child_count() {
-            let Some(inner) = child.child(j) else { continue };
-            if inner.is_named() {
-                if inner.utf8_text(source).ok() == Some(name) {
-                    return true;
+/// Returns `true` if a statement has an `annotations` child containing `@name`.
+/// Handles both `annotations > annotation > identifier` structure.
+fn has_annotation(node: &tree_sitter::Node, source: &[u8], name: &str) -> bool {
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() == "annotations" {
+            for j in 0..child.child_count() {
+                let Some(ann) = child.child(j) else { continue };
+                if ann.kind() == "annotation" {
+                    for k in 0..ann.child_count() {
+                        let Some(inner) = ann.child(k) else { continue };
+                        if inner.is_named() && inner.utf8_text(source).ok() == Some(name) {
+                            return true;
+                        }
+                    }
                 }
             }
         }
@@ -510,4 +509,6 @@ mod tests {
         let root = doc.tree.root_node();
         assert!(resolve_as_cast(&root, doc.source.as_bytes()).is_none());
     }
+
+
 }
