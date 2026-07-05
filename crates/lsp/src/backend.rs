@@ -826,6 +826,17 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
+        // Refuse to rename GDScript keywords.
+        const GDSCRIPT_KEYWORDS: &[&str] = &[
+            "if", "elif", "else", "for", "while", "match", "break", "continue", "pass", "return",
+            "class", "class_name", "extends", "func", "var", "const", "enum", "signal",
+            "static", "true", "false", "null", "and", "or", "not", "in", "is", "as",
+            "self", "super", "void", "int", "float", "bool", "String",
+        ];
+        if GDSCRIPT_KEYWORDS.contains(&word) {
+            return Ok(None);
+        }
+
         // Refuse to rename engine built-ins.
         let db = self.api_db.read().await;
         if let Some(db) = db.as_ref() {

@@ -110,6 +110,8 @@ fn type_ident<'a>(type_node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a
     for i in 0..type_node.child_count() {
         let Some(child) = type_node.child(i) else { continue };
         if child.is_named() {
+            // For generic/subscript types like Array[Node2D], return the full text
+            // so type checking and hover can show "Array[Node2D]".
             return child.utf8_text(source).ok();
         }
     }
@@ -304,6 +306,14 @@ mod tests {
             resolve_dollar_path("Label", &scene_map),
             Some("Label".to_owned())
         );
+    }
+
+    // --- LAB-692: Array[T] generic type tracking ---
+
+    #[test]
+    fn extracts_array_generic_type_annotation() {
+        let map = types("var items: Array[Node2D]\n");
+        assert_eq!(map.resolve("items"), Some("Array[Node2D]"));
     }
 
     // --- LAB-708 / F-1: as cast type narrowing ---
