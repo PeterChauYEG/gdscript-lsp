@@ -143,12 +143,10 @@ pub fn resolve_dollar_path(
 /// # LAB-708 / F-1
 #[must_use]
 pub fn resolve_as_cast(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
-    if node.kind() != "cast_expression" {
+    // tree-sitter-gdscript uses binary_operator for `expr as Type`, not cast_expression.
+    if node.kind() != "binary_operator" && node.kind() != "cast_expression" {
         return None;
     }
-    // tree-sitter-gdscript grammar: cast_expression has children
-    //   <expr>  "as"  <type>
-    // The type node (kind "type") is the last named child after the "as" keyword.
     let mut found_as = false;
     for i in 0..node.child_count() {
         let Some(child) = node.child(i) else { continue };
@@ -306,5 +304,45 @@ mod tests {
             resolve_dollar_path("Label", &scene_map),
             Some("Label".to_owned())
         );
+    }
+
+    // --- LAB-708 / F-1: as cast type narrowing ---
+
+    fn find_as_binary<'a>(node: tree_sitter::Node<'a>, source: &[u8]) -> Option<tree_sitter::Node<'a>> {
+        if node.kind() == "binary_operator" || node.kind() == "cast_expression" {
+            for i in 0..node.child_count() {
+                if let Some(child) = node.child(i) {
+                    if child.kind() == "as" {
+                        return Some(node);
+                    }
+                }
+            }
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if let Some(found) = find_as_binary(child, source) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn resolve_as_cast_returns_target_type() {
+        let src = "func _ready():\n\tvar x = node as Sprite2D\n";
+        let doc = parse(src).unwrap();
+        let source = doc.source.as_bytes();
+        let cast_node = find_as_binary(doc.tree.root_node(), source)
+            .expect("binary_operator with 'as' not found in AST");
+        assert_eq!(resolve_as_cast(&cast_node, source), Some("Sprite2D".to_owned()));
+    }
+
+    #[test]
+    fn resolve_as_cast_non_cast_returns_none() {
+        let src = "var x: Node2D\n";
+        let doc = parse(src).unwrap();
+        let root = doc.tree.root_node();
+        assert!(resolve_as_cast(&root, doc.source.as_bytes()).is_none());
     }
 }

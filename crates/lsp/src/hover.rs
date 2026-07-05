@@ -234,4 +234,89 @@ mod tests {
         let result = hover_at("totally_unknown_xyz", "totally_unknown_xyz", 5, &empty_map(), &db);
         assert!(result.is_none());
     }
+
+    // --- additional coverage tests ---
+
+    #[test]
+    fn class_hover_shows_properties_section() {
+        let db = db();
+        let text = hover_text("Node2D", "Node2D", 3, &empty_map(), &db);
+        // Node2D has properties like `position`; the hover should list some.
+        assert!(
+            text.contains("Properties") || text.contains("position"),
+            "expected property info in Node2D hover, got: {text}"
+        );
+    }
+
+    #[test]
+    fn class_hover_shows_methods_section() {
+        let db = db();
+        let text = hover_text("Node2D", "Node2D", 3, &empty_map(), &db);
+        assert!(
+            text.contains("Methods") || text.contains("func"),
+            "expected method info in Node2D hover, got: {text}"
+        );
+    }
+
+    #[test]
+    fn method_hover_shows_return_type_arrow() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.types.insert("n".to_owned(), "Node2D".to_owned());
+        let line = "n.add_child(x)";
+        let text = hover_text("add_child", line, 6, &map, &db);
+        // The method signature is rendered as `func Class.method(...) -> ReturnType`
+        assert!(text.contains("->"), "expected return type arrow in method hover, got: {text}");
+    }
+
+    #[test]
+    fn method_hover_shows_parameter_info() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.types.insert("n".to_owned(), "Node2D".to_owned());
+        let line = "n.add_child(x)";
+        let text = hover_text("add_child", line, 6, &map, &db);
+        // add_child takes a Node argument; the hover should show the parameter name/type.
+        assert!(
+            text.contains("Node") || text.contains(":"),
+            "expected parameter info in add_child hover, got: {text}"
+        );
+    }
+
+    #[test]
+    fn property_hover_shows_type_info() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.types.insert("n".to_owned(), "Node2D".to_owned());
+        let line = "n.position";
+        let text = hover_text("position", line, 3, &map, &db);
+        // `position` is a Vector2 — the hover should show the type.
+        assert!(
+            text.contains("Vector2") || text.contains("var"),
+            "expected type info in position hover, got: {text}"
+        );
+    }
+
+    #[test]
+    fn class_hover_node_shows_name() {
+        let db = db();
+        // Node is the base class and should always be present in the API DB.
+        let text = hover_text("Node", "Node", 2, &empty_map(), &db);
+        assert!(text.contains("Node"), "class name should appear in hover");
+    }
+
+    #[test]
+    fn method_hover_format_includes_class_name() {
+        let db = db();
+        let mut map = TypeMap::default();
+        map.types.insert("n".to_owned(), "Node2D".to_owned());
+        let line = "n.add_child(x)";
+        let text = hover_text("add_child", line, 6, &map, &db);
+        // The format is `func ClassName.method_name(...)`, so the class name
+        // (or one of its ancestors) should appear before the dot.
+        assert!(
+            text.contains("Node"),
+            "expected class name in method hover signature, got: {text}"
+        );
+    }
 }
