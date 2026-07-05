@@ -1,0 +1,99 @@
+name: Update godot-headers type DB
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # daily at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch latest godot-headers commit SHA
+        id: remote
+        run: |
+          SHA=$(gh api repos/godotengine/godot-headers/commits/master --jq '.sha')
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          DATE=$(gh api repos/godotengine/godot-headers/commits/master --jq '.commit.committer.date')
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read stored SHA
+        id: stored
+        run: |
+          if [ -f .godot-headers-sha ]; then
+            echo "sha=$(cat .godot-headers-sha)" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip if up to date
+        if: steps.remote.outputs.sha == steps.stored.outputs.sha
+        run: |
+          echo "godot-headers is up to date (${${{ steps.stored.outputs.sha }}:0:8}). Nothing to do."
+          exit 0
+
+      - name: Download updated extension_api.json
+        if: steps.remote.outputs.sha != steps.stored.outputs.sha
+        run: |
+          curl -sSfL \
+            "https://raw.githubusercontent.com/godotengine/godot-headers/${{ steps.remote.outputs.sha }}/extension_api.json" \
+            -o crates/api-db/src/data/extension_api.json
+
+      - name: Validate JSON
+        if: steps.remote.outputs.sha != steps.stored.outputs.sha
+        run: python3 -c "import json,sys; json.load(open('crates/api-db/src/data/extension_api.json'))"
+
+      - name: Update stored SHA
+        if: steps.remote.outputs.sha != steps.stored.outputs.sha
+        run: echo "${{ steps.remote.outputs.sha }}" > .godot-headers-sha
+
+      - name: Install Rust toolchain
+        if: steps.remote.outputs.sha != steps.stored.outputs.sha
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        if: steps.remote.outputs.sha != steps.stored.outputs.sha
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run tests against new type DB
+        if: steps.remote.outputs.sha != steps.stored.outputs.sha
+        run: cargo test
+
+      - name: Open PR
+        if: steps.remote.outputs.sha != steps.stored.outputs.sha
+        run: |
+          SHORT="${{ steps.remote.outputs.sha }}"
+          SHORT="${SHORT:0:8}"
+          BRANCH="godot-headers-${SHORT}"
+          DATE="${{ steps.remote.outputs.date }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add crates/api-db/src/data/extension_api.json .godot-headers-sha
+          git commit -m "chore: update extension_api.json to godot-headers@${SHORT} (${DATE})"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore: update extension_api.json (godot-headers@${SHORT})" \
+            --body "Automated update from [godot-headers@${SHORT}](https://github.com/godotengine/godot-headers/commit/${{ steps.remote.outputs.sha }}) committed on ${DATE}.
+
+All tests pass against the new type DB." \
+            --base main \
+            --head "$BRANCH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

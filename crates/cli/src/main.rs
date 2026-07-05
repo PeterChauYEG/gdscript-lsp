@@ -13,6 +13,10 @@ use clap::{Parser, Subcommand};
     about = "Standalone GDScript Language Server"
 )]
 struct Cli {
+    /// Use stdio for LSP communication (default, accepted for editor compatibility)
+    #[arg(long, hide = true)]
+    stdio: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }

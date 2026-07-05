@@ -20,3 +20,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 serde_json = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-gdscript = { workspace = true }
+walkdir = { workspace = true }
