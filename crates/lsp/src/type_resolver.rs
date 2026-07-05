@@ -221,20 +221,24 @@ fn type_ident<'a>(type_node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a
     None
 }
 
-/// Resolve the Godot class name for a `$NodePath` expression.
+/// Resolve the Godot class name for a `$NodePath` or `%UniqueName` expression.
 ///
-/// `node_text` is the raw source text of the expression (e.g. `"$Sprite2D"` or
-/// `"$UI/HealthBar"`). The leading `$` is stripped and the last path component
-/// is used as the lookup key in `scene_map`, which maps node names to their
-/// Godot class names. Returns `Some(class_name)` when found.
+/// `node_text` is the raw source text of the expression (e.g. `"$Sprite2D"`,
+/// `"$UI/HealthBar"`, or `"%UniqueSprite"`). The leading `$` or `%` is stripped
+/// and the last path component is used as the lookup key in `scene_map`, which
+/// maps node names to their Godot class names. Returns `Some(class_name)` when
+/// found.
 ///
-/// # LAB-696
+/// # LAB-695, LAB-696
 #[must_use]
 pub fn resolve_dollar_path(
     node_text: &str,
     scene_map: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
-    let path = node_text.strip_prefix('$').unwrap_or(node_text);
+    let path = node_text
+        .strip_prefix('$')
+        .or_else(|| node_text.strip_prefix('%'))
+        .unwrap_or(node_text);
     let simple = path.split('/').next_back().unwrap_or(path);
     scene_map.get(simple).cloned()
 }
@@ -408,6 +412,17 @@ mod tests {
         assert_eq!(
             resolve_dollar_path("Label", &scene_map),
             Some("Label".to_owned())
+        );
+    }
+
+    #[test]
+    fn resolve_percent_unique_name() {
+        let mut scene_map = HashMap::new();
+        scene_map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
+        // LAB-695: %NodeName unique-name shortcut resolves same as $NodeName
+        assert_eq!(
+            resolve_dollar_path("%Sprite2D", &scene_map),
+            Some("Sprite2D".to_owned())
         );
     }
 

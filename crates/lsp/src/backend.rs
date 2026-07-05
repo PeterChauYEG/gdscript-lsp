@@ -401,8 +401,8 @@ impl LanguageServer for Backend {
         let char_pos = pos.character as usize;
         let _before: String = line.chars().take(char_pos).collect();
 
-        // `$` trigger — show node names from the associated scene.
-        if trigger == Some("$") {
+        // `$` or `%` trigger — show node names from the associated scene.
+        if trigger == Some("$") || trigger == Some("%") {
             let script_path = uri.to_file_path().ok();
             let index = self.project_index.read().await;
             if let Some(script_path) = script_path {
@@ -418,9 +418,10 @@ impl LanguageServer for Backend {
             let char_pos_before_dot = char_pos.saturating_sub(1);
             let before_dot: String = line.chars().take(char_pos_before_dot).collect();
 
-            // Check for `$NodeName.` pattern.
-            if let Some(dollar_pos) = before_dot.rfind('$') {
-                let node_path: String = before_dot[dollar_pos + 1..]
+            // Check for `$NodeName.` or `%NodeName.` pattern (LAB-695, LAB-696).
+            let node_prefix_pos = before_dot.rfind('$').or_else(|| before_dot.rfind('%'));
+            if let Some(prefix_pos) = node_prefix_pos {
+                let node_path: String = before_dot[prefix_pos + 1..]
                     .chars()
                     .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '/')
                     .collect();
