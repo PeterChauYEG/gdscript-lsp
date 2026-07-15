@@ -46,7 +46,7 @@ clap = { version = "4", features = ["derive"] }
 
 # file watching
 notify = { version = "6", features = ["macos_fsevent"] }
-notify-debouncer-mini = "0.4"
+notify-debouncer-mini = "0.7"
 
 # concurrency
 dashmap = "6"
