@@ -26,7 +26,7 @@ tokio = { version = "1", features = ["full"] }
 tower-lsp = "0.20"
 
 # parsing
-tree-sitter = "0.24"
+tree-sitter = "0.26"
 tree-sitter-gdscript = "6.1"
 
 # serialization
