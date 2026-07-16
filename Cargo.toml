@@ -52,7 +52,7 @@ notify-debouncer-mini = "0.7"
 dashmap = "6"
 
 # diffing (for formatting)
-similar = "2"
+similar = "3"
 
 # URL handling
 url = "2"
