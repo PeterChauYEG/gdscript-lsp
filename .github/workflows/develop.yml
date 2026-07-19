@@ -30,7 +30,20 @@ jobs:
           fetch-depth: 1
 
       - name: cargo fmt
-        run: cargo fmt --check
+        id: scan
+        continue-on-error: true
+        run: cargo fmt --check 2>&1 | tee fmt-report.txt
+
+      - name: File Linear ticket for failure
+        if: steps.scan.outcome == 'failure'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/file-linear-ticket.sh fmt fmt-report.txt
+
+      - name: Fail if fmt check failed
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
 
   clippy:
     name: clippy
@@ -42,7 +55,20 @@ jobs:
           fetch-depth: 1
 
       - name: cargo clippy
-        run: cargo clippy -- -D warnings
+        id: scan
+        continue-on-error: true
+        run: cargo clippy -- -D warnings 2>&1 | tee clippy-report.txt
+
+      - name: File Linear ticket for failure
+        if: steps.scan.outcome == 'failure'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/file-linear-ticket.sh clippy clippy-report.txt
+
+      - name: Fail if clippy check failed
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
 
   test:
     name: test
@@ -54,7 +80,20 @@ jobs:
           fetch-depth: 1
 
       - name: cargo test
-        run: cargo test
+        id: scan
+        continue-on-error: true
+        run: cargo test 2>&1 | tee test-report.txt
+
+      - name: File Linear ticket for failure
+        if: steps.scan.outcome == 'failure'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/file-linear-ticket.sh test test-report.txt
+
+      - name: Fail if tests failed
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
 
   vscode-extension:
     name: vscode-extension
