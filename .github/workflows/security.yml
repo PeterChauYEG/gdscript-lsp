@@ -20,7 +20,7 @@ concurrency:
 jobs:
   trivy:
     name: Trivy vulnerability & secret scan
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, catfood]
     steps:
       - uses: actions/checkout@v4
       - name: Run Trivy
