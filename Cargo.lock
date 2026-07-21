@@ -63,9 +63,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.103"
+version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "async-trait"
@@ -180,32 +180,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
-name = "crossbeam-utils"
-version = "0.8.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
-
-[[package]]
 name = "dashmap"
 version = "5.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
 dependencies = [
  "cfg-if",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
-name = "dashmap"
-version = "6.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
@@ -349,7 +329,6 @@ dependencies = [
 name = "gdscript-api-db"
 version = "0.1.0"
 dependencies = [
- "gdscript-core",
  "serde",
  "serde_json",
  "thiserror",
@@ -359,12 +338,8 @@ dependencies = [
 name = "gdscript-checker"
 version = "0.1.0"
 dependencies = [
- "gdscript-api-db",
  "gdscript-core",
- "gdscript-indexer",
  "gdscript-parser",
- "thiserror",
- "tracing",
  "tree-sitter",
 ]
 
@@ -372,7 +347,6 @@ dependencies = [
 name = "gdscript-core"
 version = "0.1.0"
 dependencies = [
- "serde",
  "url",
 ]
 
@@ -380,19 +354,14 @@ dependencies = [
 name = "gdscript-indexer"
 version = "0.1.0"
 dependencies = [
- "dashmap 6.2.1",
- "gdscript-api-db",
  "gdscript-core",
  "gdscript-parser",
  "notify",
  "notify-debouncer-mini",
- "serde_json",
  "thiserror",
  "tokio",
- "tracing",
  "tree-sitter",
  "tree-sitter-gdscript",
- "url",
  "walkdir",
 ]
 
@@ -408,10 +377,8 @@ dependencies = [
  "serde_json",
  "similar",
  "tempfile",
- "thiserror",
  "tokio",
  "tower-lsp",
- "tracing",
  "tree-sitter",
  "tree-sitter-gdscript",
  "url",
@@ -1212,7 +1179,7 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "bytes",
- "dashmap 5.5.3",
+ "dashmap",
  "futures",
  "httparse",
  "lsp-types",
