@@ -98,6 +98,52 @@ jobs:
       - if: steps.scan.outcome == 'failure'
         run: exit 1
 
+  dead-code:
+    name: dead-code
+    runs-on: [self-hosted, catfood]
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Cache cargo-machete binary
+        uses: actions/cache@v4
+        with:
+          path: /home/github-runner/cargo-cache/bin/cargo-machete
+          key: ${{ runner.os }}-cargo-machete-0.9.2
+
+      - name: Install cargo-machete
+        run: command -v cargo-machete || cargo install cargo-machete --locked --version 0.9.2
+
+      - name: Run dead-code scan
+        id: scan
+        continue-on-error: true
+        run: ./scripts/dead-code-scan.sh
+
+      - name: Post PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        if: always() && github.event_name == 'pull_request'
+        with:
+          header: dead-code-scan
+          path: dead-code-report.md
+
+      - name: File Linear ticket for failure
+        if: steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/file-linear-ticket.sh dead-code dead-code-report.md
+
+      - name: Fail if unused dependencies were found
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
+
   vscode-extension:
     name: vscode-extension
     runs-on: [self-hosted, catfood]
@@ -131,6 +177,7 @@ jobs:
       - fmt
       - clippy
       - test
+      - dead-code
       - vscode-extension
     steps:
       - name: Post a message in a channel

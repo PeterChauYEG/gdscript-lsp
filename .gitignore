@@ -7,3 +7,4 @@
 editors/vscode/node_modules/
 editors/vscode/out/
 *.vsix
+dead-code-report.md
