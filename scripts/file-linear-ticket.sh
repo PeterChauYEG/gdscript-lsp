@@ -27,16 +27,16 @@ if [[ -z "${LINEAR_API_KEY:-}" ]]; then
   exit 0
 fi
 
-title="${job_name}: ${GITHUB_REPOSITORY#*/} PR #${PR_NUMBER} failing"
+title="${job_name}: ${GITHUB_REPOSITORY#*/} failing"
 
 report_body="(report unavailable)"
 if [[ -f "$report_path" ]]; then
   report_body=$(cat "$report_path")
 fi
 
-# ── Dedup: look for an already-open ticket with this exact title ───────────
+# ── Dedup: look for an already-open ticket with a matching title ───────────
 search_query=$(jq -n --arg title "$title" '{
-  query: "query($title: String!) { issues(filter: { team: { key: { eq: \"LAB\" } }, state: { type: { nin: [\"completed\", \"cancelled\"] } }, title: { eq: $title } }, first: 1) { nodes { id identifier url } } }",
+  query: "query($title: String!) { issues(filter: { team: { key: { eq: \"LAB\" } }, state: { type: { nin: [\"completed\", \"cancelled\"] } }, title: { contains: $title } }, first: 1) { nodes { id identifier url } } }",
   variables: { title: $title }
 }')
 
@@ -50,7 +50,7 @@ existing_identifier=$(echo "$search_response" | jq -r '.data.issues.nodes[0].ide
 
 if [[ -n "$existing_id" ]]; then
   echo "[file-linear-ticket] existing open ticket $existing_identifier — commenting instead of creating a duplicate"
-  comment_body="Still failing as of ${RUN_URL}."
+  comment_body="Still failing on PR #${PR_NUMBER} as of ${RUN_URL}."
   comment_json=$(jq -n --arg issueId "$existing_id" --arg body "$comment_body" \
     '{query:"mutation($issueId:String!,$body:String!){commentCreate(input:{issueId:$issueId,body:$body}){success}}", variables:{issueId:$issueId, body:$body}}')
   curl -s -X POST https://api.linear.app/graphql \
