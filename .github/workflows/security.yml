@@ -21,9 +21,12 @@ jobs:
   trivy:
     name: Trivy vulnerability & secret scan
     runs-on: [self-hosted, catfood]
+    env:
+      NOT_DEPENDABOT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' }}
     steps:
       - uses: actions/checkout@v4
       - name: Run Trivy
+        if: env.NOT_DEPENDABOT == 'true'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs

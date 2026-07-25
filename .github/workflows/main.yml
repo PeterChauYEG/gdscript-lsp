@@ -166,6 +166,7 @@ jobs:
   release:
     name: release
     runs-on: [self-hosted, catfood]
+    if: github.event.head_commit.author.name != 'dependabot[bot]'
     needs: [version, build-macos, build-linux]
     env:
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
