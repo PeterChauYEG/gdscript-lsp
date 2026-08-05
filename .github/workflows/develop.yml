@@ -12,145 +12,23 @@ on:
 permissions:
   contents: read
 
-env:
-  CARGO_HOME: /home/github-runner/cargo-cache
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  fmt:
-    name: fmt
-    runs-on: [self-hosted, catfood]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: cargo fmt
-        id: scan
-        continue-on-error: true
-        run: cargo fmt --check 2>&1 | tee fmt-report.txt
-
-      - name: File Linear ticket for failure
-        if: steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
-        env:
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash scripts/file-linear-ticket.sh fmt fmt-report.txt
-
-      - if: steps.scan.outcome == 'failure'
-        run: exit 1
-
-  clippy:
-    name: clippy
-    runs-on: [self-hosted, catfood]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: cargo clippy
-        id: scan
-        continue-on-error: true
-        run: cargo clippy -- -D warnings 2>&1 | tee clippy-report.txt
-
-      - name: File Linear ticket for failure
-        if: steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
-        env:
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash scripts/file-linear-ticket.sh clippy clippy-report.txt
-
-      - if: steps.scan.outcome == 'failure'
-        run: exit 1
-
-  test:
-    name: test
-    runs-on: [self-hosted, catfood]
-    env:
-      NOT_DEPENDABOT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: cargo test
-        id: scan
-        if: env.NOT_DEPENDABOT == 'true'
-        continue-on-error: true
-        run: cargo test 2>&1 | tee test-report.txt
-
-      - name: File Linear ticket for failure
-        if: env.NOT_DEPENDABOT == 'true' && steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
-        env:
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash scripts/file-linear-ticket.sh test test-report.txt
-
-      - if: env.NOT_DEPENDABOT == 'true' && steps.scan.outcome == 'failure'
-        run: exit 1
-
-  dead-code:
-    name: dead-code
-    runs-on: [self-hosted, catfood]
-    permissions:
-      contents: read
-      pull-requests: write
-    env:
-      NOT_DEPENDABOT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Cache cargo-machete binary
-        if: env.NOT_DEPENDABOT == 'true'
-        uses: actions/cache@v4
-        with:
-          path: /home/github-runner/cargo-cache/bin/cargo-machete
-          key: ${{ runner.os }}-cargo-machete-0.9.2
-
-      - name: Install cargo-machete
-        if: env.NOT_DEPENDABOT == 'true'
-        run: command -v cargo-machete || cargo install cargo-machete --locked --version 0.9.2
-
-      - name: Run dead-code scan
-        id: scan
-        if: env.NOT_DEPENDABOT == 'true'
-        continue-on-error: true
-        run: ./scripts/dead-code-scan.sh
-
-      - name: Post PR comment
-        uses: marocchino/sticky-pull-request-comment@v2
-        if: env.NOT_DEPENDABOT == 'true' && always() && github.event_name == 'pull_request'
-        with:
-          header: dead-code-scan
-          path: dead-code-report.md
-
-      - name: File Linear ticket for failure
-        if: env.NOT_DEPENDABOT == 'true' && steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
-        env:
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash scripts/file-linear-ticket.sh dead-code dead-code-report.md
-
-      - name: Fail if unused dependencies were found
-        if: env.NOT_DEPENDABOT == 'true' && steps.scan.outcome == 'failure'
-        run: exit 1
+  rust-ci:
+    uses: PeterChauYEG/labone-actions/.github/workflows/develop-rust-ci.yml@main
+    secrets: inherit
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      pr_url: ${{ github.event.pull_request.html_url }}
+      is_dependabot: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+      enable_dead_code: true
+      cargo_machete_version: '0.9.2'
+      # security.yml already runs the Trivy scan via security-scan.yml;
+      # avoid running it a second time here.
+      enable_security_scan: false
 
   vscode-extension:
     name: vscode-extension
@@ -182,10 +60,7 @@ jobs:
     runs-on: [self-hosted, catfood]
     if: always()
     needs:
-      - fmt
-      - clippy
-      - test
-      - dead-code
+      - rust-ci
       - vscode-extension
     steps:
       - name: Post a message in a channel
