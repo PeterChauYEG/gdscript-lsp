@@ -18,13 +18,13 @@ pub fn extract_symbols(doc: &ParsedDocument) -> Vec<SymbolDef> {
 ///
 /// `class_prefix` is `Some("ClassName")` when collecting inside an inner class body,
 /// causing member names to be qualified as `ClassName.member`.
-fn collect_symbols<'tree>(
+fn collect_symbols(
     source: &[u8],
-    parent: Node<'tree>,
+    parent: Node<'_>,
     class_prefix: Option<&str>,
     symbols: &mut Vec<SymbolDef>,
 ) {
-    for i in 0..parent.child_count() {
+    for i in 0..parent.child_count() as u32 {
         let node = parent.child(i).unwrap();
         let kind = match node.kind() {
             "function_definition" => Some(SymbolKind::Function),
@@ -88,7 +88,10 @@ mod tests {
         let src = "signal my_signal(arg1: int)\n";
         let doc = parse(src).unwrap();
         let syms = extract_symbols(&doc);
-        let sig = syms.iter().find(|s| s.name == "my_signal").expect("signal not found");
+        let sig = syms
+            .iter()
+            .find(|s| s.name == "my_signal")
+            .expect("signal not found");
         assert_eq!(sig.kind, SymbolKind::Signal);
     }
 
@@ -106,14 +109,26 @@ func top_level():
         let syms = extract_symbols(&doc);
 
         // The inner class itself should appear
-        assert!(syms.iter().any(|s| s.name == "MyInner" && s.kind == SymbolKind::Class));
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "MyInner" && s.kind == SymbolKind::Class)
+        );
 
         // Inner class members should appear with qualified names
-        assert!(syms.iter().any(|s| s.name == "MyInner.x" && s.kind == SymbolKind::Variable));
-        assert!(syms.iter().any(|s| s.name == "MyInner.do_something" && s.kind == SymbolKind::Function));
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "MyInner.x" && s.kind == SymbolKind::Variable)
+        );
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "MyInner.do_something" && s.kind == SymbolKind::Function)
+        );
 
         // Top-level function should still appear unqualified
-        assert!(syms.iter().any(|s| s.name == "top_level" && s.kind == SymbolKind::Function));
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "top_level" && s.kind == SymbolKind::Function)
+        );
     }
 
     #[test]
@@ -128,9 +143,21 @@ class Outer:
         let doc = parse(src).unwrap();
         let syms = extract_symbols(&doc);
 
-        assert!(syms.iter().any(|s| s.name == "Outer" && s.kind == SymbolKind::Class));
-        assert!(syms.iter().any(|s| s.name == "Outer.outer_var" && s.kind == SymbolKind::Variable));
-        assert!(syms.iter().any(|s| s.name == "Outer.Inner" && s.kind == SymbolKind::Class));
-        assert!(syms.iter().any(|s| s.name == "Outer.Inner.inner_func" && s.kind == SymbolKind::Function));
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "Outer" && s.kind == SymbolKind::Class)
+        );
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "Outer.outer_var" && s.kind == SymbolKind::Variable)
+        );
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "Outer.Inner" && s.kind == SymbolKind::Class)
+        );
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "Outer.Inner.inner_func" && s.kind == SymbolKind::Function)
+        );
     }
 }

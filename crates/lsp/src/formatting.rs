@@ -56,8 +56,14 @@ fn diff_to_edits(old: &str, new: &str) -> Vec<TextEdit> {
                 // Remove this line
                 edits.push(TextEdit {
                     range: Range {
-                        start: Position { line: old_line, character: 0 },
-                        end: Position { line: old_line + 1, character: 0 },
+                        start: Position {
+                            line: old_line,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: old_line + 1,
+                            character: 0,
+                        },
                     },
                     new_text: String::new(),
                 });
@@ -67,8 +73,14 @@ fn diff_to_edits(old: &str, new: &str) -> Vec<TextEdit> {
                 // Insert before the current old_line position
                 edits.push(TextEdit {
                     range: Range {
-                        start: Position { line: old_line, character: 0 },
-                        end: Position { line: old_line, character: 0 },
+                        start: Position {
+                            line: old_line,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: old_line,
+                            character: 0,
+                        },
                     },
                     new_text: change.value().to_owned(),
                 });

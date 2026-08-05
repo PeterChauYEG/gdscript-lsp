@@ -1,7 +1,7 @@
 use tower_lsp::lsp_types::{
     CallHierarchyOptions, CallHierarchyServerCapability, CodeActionOptions,
     CodeActionProviderCapability, CompletionOptions, DiagnosticOptions,
-    DiagnosticServerCapabilities, DocumentLinkOptions, DocumentFormattingOptions,
+    DiagnosticServerCapabilities, DocumentFormattingOptions, DocumentLinkOptions,
     HoverProviderCapability, ImplementationProviderCapability, InlayHintOptions,
     InlayHintServerCapabilities, OneOf, RenameOptions, SelectionRangeProviderCapability,
     SemanticTokensLegend, SemanticTokensOptions, SemanticTokensServerCapabilities,
@@ -11,6 +11,7 @@ use tower_lsp::lsp_types::{
 
 /// The semantic token types we advertise, in index order.
 /// The index into this vec IS the token type integer in encoded tokens.
+#[must_use]
 pub fn semantic_token_types() -> Vec<tower_lsp::lsp_types::SemanticTokenType> {
     use tower_lsp::lsp_types::SemanticTokenType;
     vec![
@@ -40,6 +41,7 @@ pub fn semantic_token_types() -> Vec<tower_lsp::lsp_types::SemanticTokenType> {
     ]
 }
 
+#[must_use]
 pub fn semantic_token_modifiers() -> Vec<tower_lsp::lsp_types::SemanticTokenModifier> {
     vec![]
 }
@@ -47,9 +49,7 @@ pub fn semantic_token_modifiers() -> Vec<tower_lsp::lsp_types::SemanticTokenModi
 #[must_use]
 pub fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(
-            TextDocumentSyncKind::FULL,
-        )),
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".to_owned(), "$".to_owned()]),
@@ -59,7 +59,7 @@ pub fn server_capabilities() -> ServerCapabilities {
         signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".to_owned(), ",".to_owned()]),
             retrigger_characters: Some(vec![",".to_owned()]),
-            work_done_progress_options: Default::default(),
+            work_done_progress_options: WorkDoneProgressOptions::default(),
         }),
         definition_provider: Some(OneOf::Left(true)),
         type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
@@ -68,11 +68,14 @@ pub fn server_capabilities() -> ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
-            InlayHintOptions { resolve_provider: Some(false), ..Default::default() },
+            InlayHintOptions {
+                resolve_provider: Some(false),
+                ..Default::default()
+            },
         ))),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
-            work_done_progress_options: Default::default(),
+            work_done_progress_options: WorkDoneProgressOptions::default(),
         })),
         document_formatting_provider: Some(OneOf::Right(DocumentFormattingOptions {
             work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -105,7 +108,9 @@ pub fn server_capabilities() -> ServerCapabilities {
             work_done_progress_options: WorkDoneProgressOptions::default(),
         })),
         call_hierarchy_provider: Some(CallHierarchyServerCapability::Options(
-            CallHierarchyOptions { work_done_progress_options: WorkDoneProgressOptions::default() },
+            CallHierarchyOptions {
+                work_done_progress_options: WorkDoneProgressOptions::default(),
+            },
         )),
         ..Default::default()
     }

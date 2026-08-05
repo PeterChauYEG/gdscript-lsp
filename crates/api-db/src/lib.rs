@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
+#![allow(clippy::cast_possible_truncation)]
 
 pub mod db;
 pub mod error;

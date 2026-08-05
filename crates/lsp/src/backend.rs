@@ -3,37 +3,37 @@ use std::sync::Arc;
 use gdscript_api_db::ApiDb;
 use gdscript_indexer::{ProjectIndex, index::index_workspace};
 use tokio::sync::RwLock;
+use tower_lsp::lsp_types::DocumentDiagnosticReportResult;
+use tower_lsp::lsp_types::request::{
+    GotoImplementationParams, GotoImplementationResponse, GotoTypeDefinitionParams,
+    GotoTypeDefinitionResponse,
+};
+use tower_lsp::lsp_types::{
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+};
 use tower_lsp::lsp_types::{
     CodeActionOrCommand, CodeActionParams, CompletionParams, CompletionResponse, Diagnostic,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentLink, DocumentLinkParams,
-    DocumentSymbolParams, DocumentSymbolResponse,
-    DocumentDiagnosticParams, FullDocumentDiagnosticReport, RelatedFullDocumentDiagnosticReport,
-    GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverParams, DidChangeWatchedFilesParams, FileSystemWatcher,
-    GlobPattern, InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location,
-    MessageType, Position, PrepareRenameResponse, Range, ReferenceParams, Registration,
-    RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
-    SemanticTokensResult, ServerInfo, SignatureHelp, SignatureHelpParams, SymbolInformation,
-    SymbolKind, TextEdit, WatchKind, WorkspaceEdit, WorkspaceSymbolParams,
+    DidChangeTextDocumentParams, DidChangeWatchedFilesParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
+    DocumentFormattingParams, DocumentLink, DocumentLinkParams, DocumentSymbolParams,
+    DocumentSymbolResponse, FileSystemWatcher, FullDocumentDiagnosticReport, GlobPattern,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, InitializeParams,
+    InitializeResult, InlayHint, InlayHintParams, Location, MessageType, Position,
+    PrepareRenameResponse, Range, ReferenceParams, Registration,
+    RelatedFullDocumentDiagnosticReport, RenameParams, SelectionRange, SelectionRangeParams,
+    SemanticTokensParams, SemanticTokensResult, ServerInfo, SignatureHelp, SignatureHelpParams,
+    SymbolInformation, SymbolKind, TextEdit, WatchKind, WorkspaceEdit, WorkspaceSymbolParams,
 };
-use tower_lsp::lsp_types::request::{
-    GotoImplementationParams, GotoImplementationResponse,
-    GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
-};
-use tower_lsp::lsp_types::{
-    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams,
-    CallHierarchyItem, CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams,
-    CallHierarchyPrepareParams,
-};
-use tower_lsp::lsp_types::DocumentDiagnosticReportResult;
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result};
 
 use crate::{
     call_checker::check_calls,
     capabilities::server_capabilities,
     code_actions::code_actions_for,
-    completion::{class_name_completions, member_completions, node_member_completions, node_name_completions},
+    completion::{
+        class_name_completions, member_completions, node_member_completions, node_name_completions,
+    },
     diagnostics::publish_diagnostics,
     document_store::DocumentStore,
     formatting::format_document,
@@ -119,6 +119,7 @@ impl Backend {
 }
 
 #[tower_lsp::async_trait]
+#[allow(clippy::too_many_lines)]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Prefer root_uri; fall back to first workspace folder.
@@ -278,12 +279,15 @@ impl LanguageServer for Backend {
         {
             let needs_root = self.workspace_root.read().await.is_none();
             if needs_root {
-                if let Some(file_path) = uri.to_file_path().ok() {
+                if let Ok(file_path) = uri.to_file_path() {
                     if let Some(root) = find_project_root(&file_path) {
                         self.client
                             .log_message(
                                 MessageType::INFO,
-                                format!("gdscript-lsp: inferred workspace root = {}", root.display()),
+                                format!(
+                                    "gdscript-lsp: inferred workspace root = {}",
+                                    root.display()
+                                ),
                             )
                             .await;
                         *self.workspace_root.write().await = Some(root.clone());
@@ -354,7 +358,10 @@ impl LanguageServer for Backend {
             .write()
             .await
             .close(&params.text_document.uri);
-        self.type_maps.write().await.remove(&params.text_document.uri);
+        self.type_maps
+            .write()
+            .await
+            .remove(&params.text_document.uri);
     }
 
     async fn did_save(&self, _params: DidSaveTextDocumentParams) {}
@@ -399,7 +406,9 @@ impl LanguageServer for Backend {
         let pos = &params.text_document_position.position;
 
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let lines: Vec<&str> = source.lines().collect();
         let line = lines.get(pos.line as usize).copied().unwrap_or("");
@@ -455,7 +464,9 @@ impl LanguageServer for Backend {
             };
 
             let db = self.api_db.read().await;
-            let Some(db) = db.as_ref() else { return Ok(None) };
+            let Some(db) = db.as_ref() else {
+                return Ok(None);
+            };
             let type_maps = self.type_maps.read().await;
             let empty = TypeMap::default();
             let type_map = type_maps.get(uri).unwrap_or(&empty);
@@ -463,16 +474,29 @@ impl LanguageServer for Backend {
             // Resolve the receiver's type — type map → engine class → user
             // class_name → autoload singleton.
             let index = self.project_index.read().await;
-            let resolved_type = type_map.resolve(receiver)
+            let resolved_type = type_map
+                .resolve(receiver)
                 .map(str::to_owned)
                 .or_else(|| db.get_class(receiver).map(|c| c.name.clone()))
-                .or_else(|| index.class_names.contains_key(receiver).then(|| receiver.to_owned()))
-                .or_else(|| index.autoloads.contains_key(receiver).then(|| receiver.to_owned()));
+                .or_else(|| {
+                    index
+                        .class_names
+                        .contains_key(receiver)
+                        .then(|| receiver.to_owned())
+                })
+                .or_else(|| {
+                    index
+                        .autoloads
+                        .contains_key(receiver)
+                        .then(|| receiver.to_owned())
+                });
 
-            self.client.log_message(
-                MessageType::INFO,
-                format!("dot completion: receiver={receiver:?} resolved={resolved_type:?}"),
-            ).await;
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("dot completion: receiver={receiver:?} resolved={resolved_type:?}"),
+                )
+                .await;
 
             let result = if let Some(ref type_name) = resolved_type {
                 if db.get_class(type_name).is_some() {
@@ -480,11 +504,14 @@ impl LanguageServer for Backend {
                     // For `self.`, also inject the current file's own symbols so
                     // user-defined methods and signals appear alongside engine members.
                     let mut fake_map = TypeMap::default();
-                    fake_map.types.insert(receiver.to_owned(), type_name.clone());
+                    fake_map
+                        .types
+                        .insert(receiver.to_owned(), type_name.clone());
                     let mut base = member_completions(receiver, &fake_map, db);
                     if receiver == "self" {
-                        if let Some(script_path) = uri.to_file_path().ok() {
-                            if let Some(own) = user_class_completions_by_path(&script_path, &index) {
+                        if let Ok(script_path) = uri.to_file_path() {
+                            if let Some(own) = user_class_completions_by_path(&script_path, &index)
+                            {
                                 base = Some(merge_completions(base, own));
                             }
                         }
@@ -493,16 +520,18 @@ impl LanguageServer for Backend {
                 } else {
                     // User class or autoload — show its file's symbols.
                     let result = user_class_completions(type_name, &index);
-                    self.client.log_message(
-                        MessageType::INFO,
-                        format!(
-                            "dot completion: user_class_completions({type_name}) → {} items",
-                            result.as_ref().map(|r| match r {
-                                tower_lsp::lsp_types::CompletionResponse::Array(v) => v.len(),
-                                _ => 0,
-                            }).unwrap_or(0)
-                        ),
-                    ).await;
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            format!(
+                                "dot completion: user_class_completions({type_name}) → {} items",
+                                result.as_ref().map_or(0, |r| match r {
+                                    tower_lsp::lsp_types::CompletionResponse::Array(v) => v.len(),
+                                    tower_lsp::lsp_types::CompletionResponse::List(_) => 0,
+                                })
+                            ),
+                        )
+                        .await;
                     result
                 }
             } else {
@@ -520,23 +549,26 @@ impl LanguageServer for Backend {
         let type_map = type_maps.get(uri).unwrap_or(&empty);
         let index = self.project_index.read().await;
 
-        let Some(db) = db.as_ref() else { return Ok(None) };
+        let Some(db) = db.as_ref() else {
+            return Ok(None);
+        };
 
         // All class names (engine + user + autoloads)
         let mut all = match class_name_completions(db, &index.class_names, &index.autoloads) {
             tower_lsp::lsp_types::CompletionResponse::Array(v) => v,
-            _ => vec![],
+            tower_lsp::lsp_types::CompletionResponse::List(_) => vec![],
         };
 
         // Current file's own symbols (methods, vars, signals, etc.)
-        if let Some(script_path) = uri.to_file_path().ok() {
-            if let Some(own) = user_class_completions_by_path(&script_path, &index) {
-                if let tower_lsp::lsp_types::CompletionResponse::Array(items) = own {
-                    let seen: std::collections::HashSet<_> = all.iter().map(|i| i.label.clone()).collect();
-                    for item in items {
-                        if !seen.contains(&item.label) {
-                            all.push(item);
-                        }
+        if let Ok(script_path) = uri.to_file_path() {
+            if let Some(tower_lsp::lsp_types::CompletionResponse::Array(items)) =
+                user_class_completions_by_path(&script_path, &index)
+            {
+                let seen: std::collections::HashSet<_> =
+                    all.iter().map(|i| i.label.clone()).collect();
+                for item in items {
+                    if !seen.contains(&item.label) {
+                        all.push(item);
                     }
                 }
             }
@@ -544,13 +576,14 @@ impl LanguageServer for Backend {
 
         // Base class engine members (implicit self)
         if let Some(self_type) = type_map.self_type.as_deref() {
-            if let Some(base) = member_completions("self", type_map, db) {
-                if let tower_lsp::lsp_types::CompletionResponse::Array(items) = base {
-                    let seen: std::collections::HashSet<_> = all.iter().map(|i| i.label.clone()).collect();
-                    for item in items {
-                        if !seen.contains(&item.label) {
-                            all.push(item);
-                        }
+            if let Some(tower_lsp::lsp_types::CompletionResponse::Array(items)) =
+                member_completions("self", type_map, db)
+            {
+                let seen: std::collections::HashSet<_> =
+                    all.iter().map(|i| i.label.clone()).collect();
+                for item in items {
+                    if !seen.contains(&item.label) {
+                        all.push(item);
                     }
                 }
             }
@@ -594,7 +627,9 @@ impl LanguageServer for Backend {
         // Handle direct class name (e.g. `Node2D.new(`)
         let result = if db.get_class(receiver).is_some() {
             let mut fake_map = TypeMap::default();
-            fake_map.types.insert(receiver.to_owned(), receiver.to_owned());
+            fake_map
+                .types
+                .insert(receiver.to_owned(), receiver.to_owned());
             signature_help_for_method(receiver, method, active_param, &fake_map, db)
         } else {
             signature_help_for_method(receiver, method, active_param, type_map, db)
@@ -622,7 +657,10 @@ impl LanguageServer for Backend {
 
         // Check project index: class_name declarations and autoloads.
         let index = self.project_index.read().await;
-        let index_path = index.class_names.get(word).or_else(|| index.autoloads.get(word));
+        let index_path = index
+            .class_names
+            .get(word)
+            .or_else(|| index.autoloads.get(word));
         if let Some(path) = index_path {
             if let Ok(target_uri) = tower_lsp::lsp_types::Url::from_file_path(path) {
                 return Ok(Some(GotoDefinitionResponse::Scalar(Location {
@@ -697,7 +735,7 @@ impl LanguageServer for Backend {
             .flat_map(|(path, symbols)| {
                 let uri = tower_lsp::lsp_types::Url::from_file_path(path).ok();
                 symbols.iter().filter_map(move |s| {
-                    if !query.is_empty() && !s.name.to_lowercase().contains(&query) {
+                    if !query.is_empty() && !s.name.to_lowercase().contains(query) {
                         return None;
                     }
                     let uri = uri.clone()?;
@@ -707,8 +745,14 @@ impl LanguageServer for Backend {
                         location: Location {
                             uri,
                             range: Range {
-                                start: Position { line: s.line, character: s.col },
-                                end: Position { line: s.line, character: s.col },
+                                start: Position {
+                                    line: s.line,
+                                    character: s.col,
+                                },
+                                end: Position {
+                                    line: s.line,
+                                    character: s.col,
+                                },
                             },
                         },
                         tags: None,
@@ -719,7 +763,11 @@ impl LanguageServer for Backend {
             })
             .collect();
 
-        Ok(if results.is_empty() { None } else { Some(results) })
+        Ok(if results.is_empty() {
+            None
+        } else {
+            Some(results)
+        })
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
@@ -728,7 +776,9 @@ impl LanguageServer for Backend {
 
         let documents = self.documents.read().await;
         let source = documents.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let Some(word) = word_at(&source, pos.line, pos.character) else {
             return Ok(None);
@@ -738,8 +788,7 @@ impl LanguageServer for Backend {
         // Build search corpus: indexed files on disk + all open documents
         // (open docs take priority over disk — they may have unsaved changes).
         let index = self.project_index.read().await;
-        let indexed_paths: Vec<std::path::PathBuf> =
-            index.file_symbols.keys().cloned().collect();
+        let indexed_paths: Vec<std::path::PathBuf> = index.file_symbols.keys().cloned().collect();
 
         // Collect open documents keyed by their URI.
         let open_docs: std::collections::HashMap<tower_lsp::lsp_types::Url, String> =
@@ -751,9 +800,8 @@ impl LanguageServer for Backend {
 
         // Search indexed files, preferring in-memory content for open docs.
         for path in &indexed_paths {
-            let file_uri = match tower_lsp::lsp_types::Url::from_file_path(path) {
-                Ok(u) => u,
-                Err(_) => continue,
+            let Ok(file_uri) = tower_lsp::lsp_types::Url::from_file_path(path) else {
+                continue;
             };
             let text = if let Some(doc) = open_docs.get(&file_uri) {
                 doc.clone()
@@ -771,20 +819,25 @@ impl LanguageServer for Backend {
             let already_searched = doc_uri
                 .to_file_path()
                 .ok()
-                .map(|p| indexed_paths.contains(&p))
-                .unwrap_or(false);
+                .is_some_and(|p| indexed_paths.contains(&p));
             if !already_searched {
                 search_word_in_text(text, &word, doc_uri, &mut locations);
             }
         }
 
-        Ok(if locations.is_empty() { None } else { Some(locations) })
+        Ok(if locations.is_empty() {
+            None
+        } else {
+            Some(locations)
+        })
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let uri = &params.text_document.uri;
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let Ok(doc) = gdscript_parser::parse::parse(&source) else {
             return Ok(None);
@@ -794,13 +847,12 @@ impl LanguageServer for Backend {
         Ok(if hints.is_empty() { None } else { Some(hints) })
     }
 
-    async fn formatting(
-        &self,
-        params: DocumentFormattingParams,
-    ) -> Result<Option<Vec<TextEdit>>> {
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let gdformat_path = "gdformat";
         let edits = format_document(&source, gdformat_path).await;
@@ -813,32 +865,72 @@ impl LanguageServer for Backend {
     ) -> Result<Option<Vec<CodeActionOrCommand>>> {
         let uri = &params.text_document.uri;
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let diags: Vec<Diagnostic> = params.context.diagnostics;
         let actions = code_actions_for(uri, &source, &params.range, &diags);
-        Ok(if actions.is_empty() { None } else { Some(actions) })
+        Ok(if actions.is_empty() {
+            None
+        } else {
+            Some(actions)
+        })
     }
 
     async fn prepare_rename(
         &self,
         params: tower_lsp::lsp_types::TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
+        // Refuse to rename GDScript keywords.
+        const GDSCRIPT_KEYWORDS: &[&str] = &[
+            "if",
+            "elif",
+            "else",
+            "for",
+            "while",
+            "match",
+            "break",
+            "continue",
+            "pass",
+            "return",
+            "class",
+            "class_name",
+            "extends",
+            "func",
+            "var",
+            "const",
+            "enum",
+            "signal",
+            "static",
+            "true",
+            "false",
+            "null",
+            "and",
+            "or",
+            "not",
+            "in",
+            "is",
+            "as",
+            "self",
+            "super",
+            "void",
+            "int",
+            "float",
+            "bool",
+            "String",
+        ];
+
         let uri = &params.text_document.uri;
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let Some(word) = word_at(&source, params.position.line, params.position.character) else {
             return Ok(None);
         };
 
-        // Refuse to rename GDScript keywords.
-        const GDSCRIPT_KEYWORDS: &[&str] = &[
-            "if", "elif", "else", "for", "while", "match", "break", "continue", "pass", "return",
-            "class", "class_name", "extends", "func", "var", "const", "enum", "signal",
-            "static", "true", "false", "null", "and", "or", "not", "in", "is", "as",
-            "self", "super", "void", "int", "float", "bool", "String",
-        ];
         if GDSCRIPT_KEYWORDS.contains(&word) {
             return Ok(None);
         }
@@ -867,8 +959,14 @@ impl LanguageServer for Backend {
         let end_char = start_char + word.len();
 
         Ok(Some(PrepareRenameResponse::Range(Range {
-            start: Position { line: params.position.line, character: start_char as u32 },
-            end: Position { line: params.position.line, character: end_char as u32 },
+            start: Position {
+                line: params.position.line,
+                character: start_char as u32,
+            },
+            end: Position {
+                line: params.position.line,
+                character: end_char as u32,
+            },
         })))
     }
 
@@ -878,7 +976,9 @@ impl LanguageServer for Backend {
         let new_name = &params.new_name;
 
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let Some(word) = word_at(&source, pos.line, pos.character) else {
             return Ok(None);
@@ -889,14 +989,16 @@ impl LanguageServer for Backend {
         let paths: Vec<std::path::PathBuf> = index.file_symbols.keys().cloned().collect();
         drop(index);
 
-        let mut changes: std::collections::HashMap<
-            tower_lsp::lsp_types::Url,
-            Vec<TextEdit>,
-        > = std::collections::HashMap::new();
+        let mut changes: std::collections::HashMap<tower_lsp::lsp_types::Url, Vec<TextEdit>> =
+            std::collections::HashMap::new();
 
         for path in paths {
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let Ok(file_uri) = tower_lsp::lsp_types::Url::from_file_path(&path) else { continue };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(file_uri) = tower_lsp::lsp_types::Url::from_file_path(&path) else {
+                continue;
+            };
 
             let mut edits: Vec<TextEdit> = Vec::new();
             for (line_num, line_text) in text.lines().enumerate() {
@@ -915,8 +1017,14 @@ impl LanguageServer for Backend {
                     if before_ok && after_ok {
                         edits.push(TextEdit {
                             range: Range {
-                                start: Position { line: line_num as u32, character: abs as u32 },
-                                end: Position { line: line_num as u32, character: (abs + word.len()) as u32 },
+                                start: Position {
+                                    line: line_num as u32,
+                                    character: abs as u32,
+                                },
+                                end: Position {
+                                    line: line_num as u32,
+                                    character: (abs + word.len()) as u32,
+                                },
                             },
                             new_text: new_name.clone(),
                         });
@@ -951,7 +1059,9 @@ impl LanguageServer for Backend {
         let uri = &params.text_document_position_params.text_document.uri;
 
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let Some(word) = word_at(&source, pos.line, pos.character) else {
             return Ok(None);
@@ -965,13 +1075,12 @@ impl LanguageServer for Backend {
             .map(str::to_owned);
         drop(type_maps);
 
-        let Some(type_name) = type_name else { return Ok(None) };
+        let Some(type_name) = type_name else {
+            return Ok(None);
+        };
 
         let index = self.project_index.read().await;
-        let path = index
-            .class_names
-            .get(type_name.as_str())
-            .cloned();
+        let path = index.class_names.get(type_name.as_str()).cloned();
         drop(index);
 
         let Some(path) = path else { return Ok(None) };
@@ -982,8 +1091,14 @@ impl LanguageServer for Backend {
         Ok(Some(GotoTypeDefinitionResponse::Scalar(Location {
             uri: target_uri,
             range: Range {
-                start: Position { line: 0, character: 0 },
-                end: Position { line: 0, character: 0 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
             },
         })))
     }
@@ -997,7 +1112,9 @@ impl LanguageServer for Backend {
         let uri = &params.text_document_position_params.text_document.uri;
 
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let Some(word) = word_at(&source, pos.line, pos.character) else {
             return Ok(None);
@@ -1015,8 +1132,14 @@ impl LanguageServer for Backend {
                 Some(Location {
                     uri: target_uri,
                     range: Range {
-                        start: Position { line: 0, character: 0 },
-                        end: Position { line: 0, character: 0 },
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 0,
+                        },
                     },
                 })
             })
@@ -1031,18 +1154,19 @@ impl LanguageServer for Backend {
     }
 
     // --- textDocument/documentLink (LAB-704) ---
-    async fn document_link(
-        &self,
-        params: DocumentLinkParams,
-    ) -> Result<Option<Vec<DocumentLink>>> {
+    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
         let uri = &params.text_document.uri;
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
         let root = self.workspace_root.read().await.clone();
         let Some(root) = root else { return Ok(None) };
 
-        let Ok(doc) = gdscript_parser::parse::parse(&source) else { return Ok(None) };
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else {
+            return Ok(None);
+        };
         let links = crate::document_links::document_links(&doc, &root);
         Ok(if links.is_empty() { None } else { Some(links) })
     }
@@ -1054,9 +1178,13 @@ impl LanguageServer for Backend {
     ) -> Result<Option<Vec<SelectionRange>>> {
         let uri = &params.text_document.uri;
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
-        let Ok(doc) = gdscript_parser::parse::parse(&source) else { return Ok(None) };
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else {
+            return Ok(None);
+        };
         let ranges = crate::selection_range::selection_ranges(&doc, &params.positions);
         Ok(Some(ranges))
     }
@@ -1068,9 +1196,13 @@ impl LanguageServer for Backend {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = &params.text_document.uri;
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
 
-        let Ok(doc) = gdscript_parser::parse::parse(&source) else { return Ok(None) };
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else {
+            return Ok(None);
+        };
         let tokens = crate::semantic_tokens::semantic_tokens(&doc);
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
@@ -1084,7 +1216,9 @@ impl LanguageServer for Backend {
         let uri = &params.text_document_position_params.text_document.uri;
 
         let source = self.documents.read().await.get(uri).map(str::to_owned);
-        let Some(source) = source else { return Ok(None) };
+        let Some(source) = source else {
+            return Ok(None);
+        };
         let Some(word) = word_at(&source, pos.line, pos.character) else {
             return Ok(None);
         };
@@ -1096,16 +1230,21 @@ impl LanguageServer for Backend {
         let item = symbols
             .and_then(|syms| {
                 syms.iter().find(|s| {
-                    s.name == word
-                        && matches!(s.kind, gdscript_core::symbol::SymbolKind::Function)
+                    s.name == word && matches!(s.kind, gdscript_core::symbol::SymbolKind::Function)
                 })
             })
             .map(|sym| {
                 let target_uri = tower_lsp::lsp_types::Url::from_file_path(&doc_path)
-                    .unwrap_or_else(|_| uri.clone());
+                    .unwrap_or_else(|()| uri.clone());
                 let sym_range = Range {
-                    start: Position { line: sym.line, character: 0 },
-                    end: Position { line: sym.line, character: 0 },
+                    start: Position {
+                        line: sym.line,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: sym.line,
+                        character: 0,
+                    },
                 };
                 CallHierarchyItem {
                     name: sym.name.clone(),
@@ -1135,7 +1274,9 @@ impl LanguageServer for Backend {
             let Ok(caller_uri) = tower_lsp::lsp_types::Url::from_file_path(path) else {
                 continue;
             };
-            let Ok(source) = std::fs::read_to_string(path) else { continue };
+            let Ok(source) = std::fs::read_to_string(path) else {
+                continue;
+            };
 
             // Find each function in this file and check if its body calls target_name.
             for sym in symbols {
@@ -1145,8 +1286,14 @@ impl LanguageServer for Backend {
                 let call_ranges = find_call_sites_in_source(&source, target_name, sym.line);
                 if !call_ranges.is_empty() {
                     let caller_range = Range {
-                        start: Position { line: sym.line, character: 0 },
-                        end: Position { line: sym.line, character: 0 },
+                        start: Position {
+                            line: sym.line,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: sym.line,
+                            character: 0,
+                        },
                     };
                     calls.push(CallHierarchyIncomingCall {
                         from: CallHierarchyItem {
@@ -1173,8 +1320,12 @@ impl LanguageServer for Backend {
         params: CallHierarchyOutgoingCallsParams,
     ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
         let item = &params.item;
-        let Ok(path) = item.uri.to_file_path() else { return Ok(None) };
-        let Ok(source) = std::fs::read_to_string(&path) else { return Ok(None) };
+        let Ok(path) = item.uri.to_file_path() else {
+            return Ok(None);
+        };
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            return Ok(None);
+        };
         let index = self.project_index.read().await;
 
         // Collect all function names across the project for lookup.
@@ -1186,16 +1337,18 @@ impl LanguageServer for Backend {
                     let uri = tower_lsp::lsp_types::Url::from_file_path(p).ok();
                     syms.iter()
                         .filter(|s| s.kind == gdscript_core::symbol::SymbolKind::Function)
-                        .filter_map(move |s| {
-                            uri.clone().map(|u| (s.name.clone(), (u, s.line)))
-                        })
+                        .filter_map(move |s| uri.clone().map(|u| (s.name.clone(), (u, s.line))))
                         .collect::<Vec<_>>()
                 })
                 .collect();
 
         let caller_start_line = item.range.start.line;
         let outgoing = find_outgoing_calls_in_source(&source, caller_start_line, &known_functions);
-        Ok(if outgoing.is_empty() { None } else { Some(outgoing) })
+        Ok(if outgoing.is_empty() {
+            None
+        } else {
+            Some(outgoing)
+        })
     }
 
     // --- textDocument/diagnostic pull model (LAB-707) ---
@@ -1217,13 +1370,15 @@ impl LanguageServer for Backend {
         .await;
 
         Ok(DocumentDiagnosticReportResult::Report(
-            tower_lsp::lsp_types::DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
-                related_documents: None,
-                full_document_diagnostic_report: FullDocumentDiagnosticReport {
-                    result_id: None,
-                    items: diagnostics,
+            tower_lsp::lsp_types::DocumentDiagnosticReport::Full(
+                RelatedFullDocumentDiagnosticReport {
+                    related_documents: None,
+                    full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                        result_id: None,
+                        items: diagnostics,
+                    },
                 },
-            })
+            ),
         ))
     }
 }
@@ -1250,19 +1405,27 @@ fn user_class_completions_by_path(
                 SymbolKind::Class => CompletionItemKind::CLASS,
                 SymbolKind::Enum | SymbolKind::EnumMember => CompletionItemKind::ENUM,
             };
-            CompletionItem { label: sym.name.clone(), kind: Some(kind), ..Default::default() }
+            CompletionItem {
+                label: sym.name.clone(),
+                kind: Some(kind),
+                ..Default::default()
+            }
         })
         .collect();
-    if items.is_empty() { None } else { Some(CompletionResponse::Array(items)) }
+    if items.is_empty() {
+        None
+    } else {
+        Some(CompletionResponse::Array(items))
+    }
 }
 
-/// Merge two CompletionResponses, deduplicating by label.
+/// Merge two `CompletionResponses`, deduplicating by label.
 fn merge_completions(
     a: Option<tower_lsp::lsp_types::CompletionResponse>,
     b: tower_lsp::lsp_types::CompletionResponse,
 ) -> tower_lsp::lsp_types::CompletionResponse {
-    use tower_lsp::lsp_types::CompletionResponse;
     use std::collections::HashSet;
+    use tower_lsp::lsp_types::CompletionResponse;
 
     let mut items = match a {
         Some(CompletionResponse::Array(v)) => v,
@@ -1307,7 +1470,10 @@ fn user_class_completions(
             CompletionItem {
                 label: sym.name.clone(),
                 kind: Some(kind),
-                detail: sym.type_annotation.clone().or_else(|| Some(class_name.to_owned())),
+                detail: sym
+                    .type_annotation
+                    .clone()
+                    .or_else(|| Some(class_name.to_owned())),
                 ..Default::default()
             }
         })
@@ -1345,8 +1511,8 @@ fn search_word_in_text(
         while start + wlen <= bytes.len() {
             if let Some(rel) = line_text[start..].find(word) {
                 let abs = start + rel;
-                let before_ok = abs == 0
-                    || (!bytes[abs - 1].is_ascii_alphanumeric() && bytes[abs - 1] != b'_');
+                let before_ok =
+                    abs == 0 || (!bytes[abs - 1].is_ascii_alphanumeric() && bytes[abs - 1] != b'_');
                 let after = abs + wlen;
                 let after_ok = after >= bytes.len()
                     || (!bytes[after].is_ascii_alphanumeric() && bytes[after] != b'_');
@@ -1354,8 +1520,14 @@ fn search_word_in_text(
                     out.push(Location {
                         uri: uri.clone(),
                         range: Range {
-                            start: Position { line: line_num as u32, character: abs as u32 },
-                            end: Position { line: line_num as u32, character: after as u32 },
+                            start: Position {
+                                line: line_num as u32,
+                                character: abs as u32,
+                            },
+                            end: Position {
+                                line: line_num as u32,
+                                character: after as u32,
+                            },
                         },
                     });
                 }
@@ -1409,8 +1581,14 @@ fn find_call_sites_in_source(source: &str, target_fn: &str, fn_start_line: u32) 
             if before_ok {
                 let end = abs + target_fn.len();
                 out.push(Range {
-                    start: Position { line: line_idx as u32, character: abs as u32 },
-                    end: Position { line: line_idx as u32, character: end as u32 },
+                    start: Position {
+                        line: line_idx as u32,
+                        character: abs as u32,
+                    },
+                    end: Position {
+                        line: line_idx as u32,
+                        character: end as u32,
+                    },
                 });
             }
             start = abs + 1;
@@ -1441,7 +1619,7 @@ fn find_outgoing_calls_in_source(
     let mut found: std::collections::HashMap<String, Vec<Range>> = std::collections::HashMap::new();
     for (i, line) in lines[fn_start..fn_end].iter().enumerate() {
         let line_idx = fn_start + i;
-        for (fn_name, _) in known_fns {
+        for fn_name in known_fns.keys() {
             let call_pat = format!("{fn_name}(");
             let mut start = 0usize;
             while let Some(rel) = line[start..].find(&call_pat) {
@@ -1452,8 +1630,14 @@ fn find_outgoing_calls_in_source(
                 if before_ok {
                     let end = abs + fn_name.len();
                     found.entry(fn_name.clone()).or_default().push(Range {
-                        start: Position { line: line_idx as u32, character: abs as u32 },
-                        end: Position { line: line_idx as u32, character: end as u32 },
+                        start: Position {
+                            line: line_idx as u32,
+                            character: abs as u32,
+                        },
+                        end: Position {
+                            line: line_idx as u32,
+                            character: end as u32,
+                        },
                     });
                 }
                 start = abs + 1;
@@ -1466,8 +1650,14 @@ fn find_outgoing_calls_in_source(
         .filter_map(|(fn_name, ranges)| {
             let (callee_uri, callee_line) = known_fns.get(&fn_name)?;
             let callee_range = Range {
-                start: Position { line: *callee_line, character: 0 },
-                end: Position { line: *callee_line, character: 0 },
+                start: Position {
+                    line: *callee_line,
+                    character: 0,
+                },
+                end: Position {
+                    line: *callee_line,
+                    character: 0,
+                },
             };
             Some(CallHierarchyOutgoingCall {
                 to: CallHierarchyItem {

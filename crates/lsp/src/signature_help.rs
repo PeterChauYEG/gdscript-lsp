@@ -20,7 +20,7 @@ pub fn signature_help_for_method(
     let type_name = type_map.resolve(receiver)?;
     let chain = api_db.inheritance_chain(type_name);
 
-    for class_name in &chain {
+    if let Some(class_name) = chain.first() {
         let class = api_db.get_class(class_name)?;
         let method = class.methods.iter().find(|m| m.name == method_name)?;
 

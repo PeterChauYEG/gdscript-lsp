@@ -51,7 +51,7 @@ pub fn member_completions(
                 } else {
                     CompletionItemKind::METHOD
                 }),
-                detail: Some(format!("[{}] {}", class_name, signature)),
+                detail: Some(format!("[{class_name}] {signature}")),
                 insert_text: Some(format!("{}(", method.name)),
                 ..Default::default()
             };
@@ -70,7 +70,10 @@ pub fn member_completions(
             items.push(CompletionItem {
                 label: prop.name.clone(),
                 kind: Some(CompletionItemKind::PROPERTY),
-                detail: Some(format!("[{}] {}: {}", class_name, prop.name, prop.type_name)),
+                detail: Some(format!(
+                    "[{}] {}: {}",
+                    class_name, prop.name, prop.type_name
+                )),
                 documentation: if prop.description.is_empty() {
                     None
                 } else {
@@ -87,7 +90,10 @@ pub fn member_completions(
             items.push(CompletionItem {
                 label: constant.name.clone(),
                 kind: Some(CompletionItemKind::CONSTANT),
-                detail: Some(format!("[{}] {} = {}", class_name, constant.name, constant.value)),
+                detail: Some(format!(
+                    "[{}] {} = {}",
+                    class_name, constant.name, constant.value
+                )),
                 ..Default::default()
             });
         }
@@ -99,6 +105,7 @@ pub fn member_completions(
 /// Build a flat list of engine class names, user `class_name` declarations,
 /// and autoload singletons from project.godot.
 #[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn class_name_completions(
     api_db: &ApiDb,
     user_classes: &std::collections::HashMap<String, std::path::PathBuf>,
@@ -131,6 +138,7 @@ pub fn class_name_completions(
 /// Build completion items for `$` node path access — returns all node names
 /// from the given scene map as completion items.
 #[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn node_name_completions(
     scene_map: &std::collections::HashMap<String, String>,
 ) -> CompletionResponse {
@@ -150,6 +158,7 @@ pub fn node_name_completions(
 /// Build member completions for a node accessed via `$NodeName.`, resolving
 /// the node type from `scene_map` and delegating to `member_completions`.
 #[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn node_member_completions(
     node_name: &str,
     scene_map: &std::collections::HashMap<String, String>,
@@ -159,7 +168,9 @@ pub fn node_member_completions(
     let simple = node_name.split('/').next_back().unwrap_or(node_name);
     let type_name = scene_map.get(simple)?;
     let mut fake_map = TypeMap::default();
-    fake_map.types.insert(node_name.to_owned(), type_name.clone());
+    fake_map
+        .types
+        .insert(node_name.to_owned(), type_name.clone());
     member_completions(node_name, &fake_map, api_db)
 }
 
@@ -170,7 +181,9 @@ mod tests {
     use super::*;
     use crate::type_resolver::TypeMap;
 
-    fn db() -> ApiDb { ApiDb::bundled().unwrap() }
+    fn db() -> ApiDb {
+        ApiDb::bundled().unwrap()
+    }
 
     fn item_labels(resp: Option<CompletionResponse>) -> Vec<String> {
         match resp {
@@ -217,7 +230,10 @@ mod tests {
     fn class_name_completions_includes_user_classes() {
         let db = db();
         let mut user = std::collections::HashMap::new();
-        user.insert("Player".to_owned(), std::path::PathBuf::from("/res/player.gd"));
+        user.insert(
+            "Player".to_owned(),
+            std::path::PathBuf::from("/res/player.gd"),
+        );
         let empty = std::collections::HashMap::new();
         let labels = item_labels(Some(class_name_completions(&db, &user, &empty)));
         assert!(labels.iter().any(|l| l == "Player"));
@@ -229,7 +245,10 @@ mod tests {
         let db = db();
         let empty = std::collections::HashMap::new();
         let mut autoloads = std::collections::HashMap::new();
-        autoloads.insert("EventBusManager".to_owned(), std::path::PathBuf::from("/res/event_bus.gd"));
+        autoloads.insert(
+            "EventBusManager".to_owned(),
+            std::path::PathBuf::from("/res/event_bus.gd"),
+        );
         let labels = item_labels(Some(class_name_completions(&db, &empty, &autoloads)));
         assert!(labels.iter().any(|l| l == "EventBusManager"));
         assert!(labels.iter().any(|l| l == "Node2D"));

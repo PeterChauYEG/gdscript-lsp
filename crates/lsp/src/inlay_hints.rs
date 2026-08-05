@@ -19,12 +19,7 @@ pub fn inlay_hints(doc: &ParsedDocument, range: &Range) -> Vec<InlayHint> {
     hints
 }
 
-fn collect_hints(
-    node: &tree_sitter::Node,
-    source: &[u8],
-    range: &Range,
-    out: &mut Vec<InlayHint>,
-) {
+fn collect_hints(node: &tree_sitter::Node, source: &[u8], range: &Range, out: &mut Vec<InlayHint>) {
     match node.kind() {
         "variable_statement" => {
             hint_for_var(node, source, range, out);
@@ -34,7 +29,7 @@ fn collect_hints(
         "function_definition" => {
             hint_for_func(node, source, range, out);
             // Recurse into body only
-            for i in 0..node.child_count() {
+            for i in 0..node.child_count() as u32 {
                 let Some(child) = node.child(i) else { continue };
                 if child.kind() == "body" {
                     collect_hints(&child, source, range, out);
@@ -45,20 +40,15 @@ fn collect_hints(
         _ => {}
     }
 
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         collect_hints(&child, source, range, out);
     }
 }
 
-fn hint_for_var(
-    stmt: &tree_sitter::Node,
-    _source: &[u8],
-    range: &Range,
-    out: &mut Vec<InlayHint>,
-) {
+fn hint_for_var(stmt: &tree_sitter::Node, _source: &[u8], range: &Range, out: &mut Vec<InlayHint>) {
     // Skip if already has explicit type annotation.
-    let has_type = (0..stmt.child_count())
+    let has_type = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .any(|n| n.kind() == "type");
     if has_type {
@@ -66,7 +56,7 @@ fn hint_for_var(
     }
 
     // Get the name node to position the hint.
-    let name_node = (0..stmt.child_count())
+    let name_node = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .find(|n| n.kind() == "name");
     let Some(name_node) = name_node else { return };
@@ -87,7 +77,9 @@ fn hint_for_var(
     let value = rhs_value(stmt);
     let Some(value) = value else { return };
 
-    let Some(type_name) = infer_literal_type(&value) else { return };
+    let Some(type_name) = infer_literal_type(&value) else {
+        return;
+    };
 
     out.push(InlayHint {
         position: hint_pos,
@@ -105,7 +97,7 @@ fn hint_for_var(
 ///
 /// The hint is placed right after the closing `)` of the parameter list so
 /// the reader can see the implicit return type without having to remember
-/// GDScript's default.
+/// `GDScript`'s default.
 fn hint_for_func(
     func: &tree_sitter::Node,
     _source: &[u8],
@@ -113,7 +105,7 @@ fn hint_for_func(
     out: &mut Vec<InlayHint>,
 ) {
     // Skip if the function already declares a return type (has a `->` child).
-    let has_return_type = (0..func.child_count())
+    let has_return_type = (0..func.child_count() as u32)
         .filter_map(|i| func.child(i))
         .any(|n| n.kind() == "->");
     if has_return_type {
@@ -121,10 +113,12 @@ fn hint_for_func(
     }
 
     // Find the `parameters` node to anchor the hint position.
-    let params_node = (0..func.child_count())
+    let params_node = (0..func.child_count() as u32)
         .filter_map(|i| func.child(i))
         .find(|n| n.kind() == "parameters");
-    let Some(params_node) = params_node else { return };
+    let Some(params_node) = params_node else {
+        return;
+    };
 
     let params_end = params_node.end_position();
     let hint_pos = Position {
@@ -150,7 +144,7 @@ fn hint_for_func(
 
 fn rhs_value<'a>(stmt: &'a tree_sitter::Node) -> Option<tree_sitter::Node<'a>> {
     let mut after_eq = false;
-    for i in 0..stmt.child_count() {
+    for i in 0..stmt.child_count() as u32 {
         let Some(child) = stmt.child(i) else { continue };
         if child.kind() == "=" {
             after_eq = true;
@@ -170,8 +164,14 @@ mod tests {
 
     fn full_range() -> Range {
         Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 9999, character: 0 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 9999,
+                character: 0,
+            },
         }
     }
 
@@ -181,7 +181,7 @@ mod tests {
             .into_iter()
             .map(|h| match h.label {
                 InlayHintLabel::String(s) => s,
-                _ => String::new(),
+                InlayHintLabel::LabelParts(_) => String::new(),
             })
             .collect()
     }
@@ -237,7 +237,10 @@ mod tests {
         let src = "func _ready():\n\tvar x = 1\n";
         let labels = hint_labels(src);
         // Both the void return hint and the local var type hint are emitted.
-        assert!(labels.contains(&": int".to_owned()), "expected local var hint");
+        assert!(
+            labels.contains(&": int".to_owned()),
+            "expected local var hint"
+        );
     }
 
     #[test]
@@ -246,8 +249,14 @@ mod tests {
         let doc = parse(src).unwrap();
         // Only request line 1
         let range = Range {
-            start: Position { line: 1, character: 0 },
-            end: Position { line: 1, character: 0 },
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 0,
+            },
         };
         let hints = inlay_hints(&doc, &range);
         assert_eq!(hints.len(), 1);
@@ -261,8 +270,7 @@ mod tests {
         let labels = hint_labels(src);
         assert!(
             labels.iter().any(|l| l == " -> void"),
-            "expected a void hint, got: {:?}",
-            labels
+            "expected a void hint, got: {labels:?}"
         );
     }
 
@@ -272,8 +280,7 @@ mod tests {
         let labels = hint_labels(src);
         assert!(
             !labels.iter().any(|l| l.contains("void")),
-            "should not emit void hint for typed function, got: {:?}",
-            labels,
+            "should not emit void hint for typed function, got: {labels:?}",
         );
     }
 
@@ -282,8 +289,14 @@ mod tests {
         // Functions with declared return types: body `var` still gets a type hint.
         let src = "func compute() -> int:\n\tvar x = 5\n\treturn x\n";
         let labels = hint_labels(src);
-        assert!(labels.contains(&": int".to_owned()), "body var hint expected");
-        assert!(!labels.iter().any(|l| l.contains("void")), "no void hint expected");
+        assert!(
+            labels.contains(&": int".to_owned()),
+            "body var hint expected"
+        );
+        assert!(
+            !labels.iter().any(|l| l.contains("void")),
+            "no void hint expected"
+        );
     }
 
     #[test]
@@ -293,8 +306,7 @@ mod tests {
         assert_eq!(
             labels.iter().filter(|l| l.as_str() == " -> void").count(),
             2,
-            "expected two void hints, got: {:?}",
-            labels
+            "expected two void hints, got: {labels:?}"
         );
     }
 
@@ -307,7 +319,7 @@ mod tests {
             .iter()
             .find(|h| match &h.label {
                 InlayHintLabel::String(s) => s.contains("void"),
-                _ => false,
+                InlayHintLabel::LabelParts(_) => false,
             })
             .expect("void hint should be present");
         // "func foo():" — f(0)u(1)n(2)c(3) (4)f(5)o(6)o(7)((8))(9):(10)

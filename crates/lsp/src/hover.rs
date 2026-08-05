@@ -31,7 +31,10 @@ pub fn hover_at(
     // Check whether there's a `.receiver` pattern before it.
     let word_start = find_word_start(line, char_pos);
 
-    if let Some(dot_pos) = word_start.checked_sub(1).filter(|&i| line.as_bytes().get(i) == Some(&b'.')) {
+    if let Some(dot_pos) = word_start
+        .checked_sub(1)
+        .filter(|&i| line.as_bytes().get(i) == Some(&b'.'))
+    {
         // Find the receiver identifier before the dot.
         let before_dot: String = line.chars().take(dot_pos).collect();
         let receiver = before_dot
@@ -67,7 +70,9 @@ pub fn hover_at(
 fn hover_member(type_name: &str, member: &str, api_db: &ApiDb) -> Option<Hover> {
     let chain = api_db.inheritance_chain(type_name);
     for class_name in &chain {
-        let Some(class) = api_db.get_class(class_name) else { continue };
+        let Some(class) = api_db.get_class(class_name) else {
+            continue;
+        };
 
         if let Some(method) = class.methods.iter().find(|m| m.name == member) {
             let args: Vec<String> = method
@@ -139,7 +144,10 @@ fn hover_class(word: &str, api_db: &ApiDb) -> Option<Hover> {
     if !class.methods.is_empty() {
         lines.push(format!("**Methods** ({})", class.methods.len()));
         for m in class.methods.iter().take(5) {
-            let ret = m.return_value.as_ref().map_or("void", |r| r.type_name.as_str());
+            let ret = m
+                .return_value
+                .as_ref()
+                .map_or("void", |r| r.type_name.as_str());
             let args: Vec<_> = m.arguments.iter().map(|a| a.name.as_str()).collect();
             lines.push(format!("- `{}({})` → {}", m.name, args.join(", "), ret));
         }
@@ -171,8 +179,12 @@ mod tests {
     use super::*;
     use crate::type_resolver::TypeMap;
 
-    fn db() -> ApiDb { ApiDb::bundled().unwrap() }
-    fn empty_map() -> TypeMap { TypeMap::default() }
+    fn db() -> ApiDb {
+        ApiDb::bundled().unwrap()
+    }
+    fn empty_map() -> TypeMap {
+        TypeMap::default()
+    }
 
     fn hover_text(word: &str, line: &str, char_pos: usize, map: &TypeMap, db: &ApiDb) -> String {
         let h = hover_at(word, line, char_pos, map, db).unwrap();
@@ -221,8 +233,10 @@ mod tests {
     #[test]
     fn bare_method_hover_uses_self_type() {
         let db = db();
-        let mut map = TypeMap::default();
-        map.self_type = Some("Node2D".to_owned());
+        let map = TypeMap {
+            self_type: Some("Node2D".to_owned()),
+            ..Default::default()
+        };
         let line = "add_child(x)";
         let text = hover_text("add_child", line, 3, &map, &db);
         assert!(text.contains("add_child"));
@@ -231,7 +245,13 @@ mod tests {
     #[test]
     fn unknown_word_returns_none() {
         let db = db();
-        let result = hover_at("totally_unknown_xyz", "totally_unknown_xyz", 5, &empty_map(), &db);
+        let result = hover_at(
+            "totally_unknown_xyz",
+            "totally_unknown_xyz",
+            5,
+            &empty_map(),
+            &db,
+        );
         assert!(result.is_none());
     }
 
@@ -266,7 +286,10 @@ mod tests {
         let line = "n.add_child(x)";
         let text = hover_text("add_child", line, 6, &map, &db);
         // The method signature is rendered as `func Class.method(...) -> ReturnType`
-        assert!(text.contains("->"), "expected return type arrow in method hover, got: {text}");
+        assert!(
+            text.contains("->"),
+            "expected return type arrow in method hover, got: {text}"
+        );
     }
 
     #[test]
@@ -278,7 +301,7 @@ mod tests {
         let text = hover_text("add_child", line, 6, &map, &db);
         // add_child takes a Node argument; the hover should show the parameter name/type.
         assert!(
-            text.contains("Node") || text.contains(":"),
+            text.contains("Node") || text.contains(':'),
             "expected parameter info in add_child hover, got: {text}"
         );
     }

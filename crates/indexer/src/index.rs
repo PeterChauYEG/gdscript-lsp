@@ -29,25 +29,29 @@ impl ProjectIndex {
     }
 }
 
-/// Extract the parent class from `extends SomeClass` in a GDScript source.
+/// Extract the parent class from `extends SomeClass` in a `GDScript` source.
 #[must_use]
 pub fn extract_extends(source: &str) -> Option<String> {
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_gdscript::LANGUAGE.into()).ok()?;
+    parser
+        .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+        .ok()?;
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
     let bytes = source.as_bytes();
 
-    for i in 0..root.child_count() {
+    for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         if node.kind() == "extends_statement" {
             // First named child after `extends` keyword.
-            for j in 0..node.child_count() {
+            for j in 0..node.child_count() as u32 {
                 let Some(child) = node.child(j) else { continue };
                 if child.kind() == "type" {
                     // The type node contains an identifier.
-                    for k in 0..child.child_count() {
-                        let Some(ident) = child.child(k) else { continue };
+                    for k in 0..child.child_count() as u32 {
+                        let Some(ident) = child.child(k) else {
+                            continue;
+                        };
                         if ident.is_named() {
                             return ident.utf8_text(bytes).ok().map(str::to_owned);
                         }
@@ -59,16 +63,18 @@ pub fn extract_extends(source: &str) -> Option<String> {
     None
 }
 
-/// Extract the `class_name` declared in a GDScript source, if any.
+/// Extract the `class_name` declared in a `GDScript` source, if any.
 #[must_use]
 pub fn extract_class_name(source: &str) -> Option<String> {
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_gdscript::LANGUAGE.into()).ok()?;
+    parser
+        .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+        .ok()?;
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
     let bytes = source.as_bytes();
 
-    for i in 0..root.child_count() {
+    for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         if node.kind() == "class_name_statement" {
             let name = node.child_by_field_name("name")?;
@@ -106,7 +112,7 @@ pub fn index_workspace(root: &Path) -> Result<ProjectIndex, IndexerError> {
     for entry in walkdir::WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.file_type().is_file())
     {
         let path = entry.path();
@@ -114,7 +120,9 @@ pub fn index_workspace(root: &Path) -> Result<ProjectIndex, IndexerError> {
 
         match ext {
             "gd" => {
-                let Ok(source) = std::fs::read_to_string(path) else { continue };
+                let Ok(source) = std::fs::read_to_string(path) else {
+                    continue;
+                };
 
                 if let Some(class_name) = extract_class_name(&source) {
                     if let Some(parent) = extract_extends(&source) {
@@ -129,7 +137,9 @@ pub fn index_workspace(root: &Path) -> Result<ProjectIndex, IndexerError> {
                 }
             }
             "tscn" => {
-                let Ok(content) = std::fs::read_to_string(path) else { continue };
+                let Ok(content) = std::fs::read_to_string(path) else {
+                    continue;
+                };
                 let node_map = crate::scene::parse(&content);
                 if !node_map.is_empty() {
                     index.scenes.insert(path.to_path_buf(), node_map);

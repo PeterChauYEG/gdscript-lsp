@@ -42,13 +42,17 @@ pub fn semantic_tokens(doc: &ParsedDocument) -> SemanticTokens {
         prev_col = col;
     }
 
-    SemanticTokens { result_id: None, data: tokens }
+    SemanticTokens {
+        result_id: None,
+        data: tokens,
+    }
 }
 
 fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u32, u32, u32)>) {
     match node.kind() {
         "function_definition" => {
-            if let Some(name) = node.child_by_field_name("name")
+            if let Some(name) = node
+                .child_by_field_name("name")
                 .or_else(|| find_child_kind(node, "name"))
             {
                 push_node(&name, TT_FUNCTION, out);
@@ -56,7 +60,8 @@ fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u
         }
         "lambda" => {
             // Optional name (named lambda: `func my_lambda(x): ...`)
-            if let Some(name) = node.child_by_field_name("name")
+            if let Some(name) = node
+                .child_by_field_name("name")
                 .or_else(|| find_child_kind(node, "name"))
             {
                 push_node(&name, TT_FUNCTION, out);
@@ -64,11 +69,12 @@ fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u
             // Parameters are highlighted by the "parameters" branch below via recursion.
         }
         "parameters" => {
-            for i in 0..node.child_count() {
+            for i in 0..node.child_count() as u32 {
                 let Some(child) = node.child(i) else { continue };
                 match child.kind() {
                     "typed_parameter" | "parameter" => {
-                        let ident = child.child_by_field_name("name")
+                        let ident = child
+                            .child_by_field_name("name")
                             .or_else(|| first_named_child(&child));
                         if let Some(n) = ident {
                             push_node(&n, TT_PARAMETER, out);
@@ -80,21 +86,24 @@ fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u
             }
         }
         "variable_statement" | "const_statement" => {
-            if let Some(name) = node.child_by_field_name("name")
+            if let Some(name) = node
+                .child_by_field_name("name")
                 .or_else(|| find_child_kind(node, "name"))
             {
                 push_node(&name, TT_VARIABLE, out);
             }
         }
         "class_name_statement" => {
-            if let Some(name) = node.child_by_field_name("name")
+            if let Some(name) = node
+                .child_by_field_name("name")
                 .or_else(|| find_child_kind(node, "name"))
             {
                 push_node(&name, TT_CLASS, out);
             }
         }
         "class_definition" => {
-            if let Some(name) = node.child_by_field_name("name")
+            if let Some(name) = node
+                .child_by_field_name("name")
                 .or_else(|| find_child_kind(node, "name"))
             {
                 push_node(&name, TT_CLASS, out);
@@ -105,33 +114,23 @@ fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u
             let end_col = node.end_position().column;
             let len = end_col.saturating_sub(start.column);
             if len > 0 && node.start_position().row == node.end_position().row {
-                out.push((start.row as u32, start.column as u32, len as u32, TT_DECORATOR));
+                out.push((
+                    start.row as u32,
+                    start.column as u32,
+                    len as u32,
+                    TT_DECORATOR,
+                ));
             }
         }
         "enum_definition" => {
-            if let Some(name) = node.child_by_field_name("name")
+            if let Some(name) = node
+                .child_by_field_name("name")
                 .or_else(|| find_child_kind(node, "name"))
             {
                 push_node(&name, TT_ENUM, out);
             }
             // Enumerators live inside enumerator_list { enumerator* }
-            for i in 0..node.child_count() {
-                let Some(child) = node.child(i) else { continue };
-                if child.kind() == "enumerator_list" {
-                    for j in 0..child.child_count() {
-                        let Some(enumerator) = child.child(j) else { continue };
-                        if enumerator.kind() == "enumerator" {
-                            if let Some(ident) = first_named_child(&enumerator) {
-                                push_node(&ident, TT_ENUM_MEMBER, out);
-                            }
-                        }
-                    }
-                } else if child.kind() == "enumerator" {
-                    if let Some(ident) = first_named_child(&child) {
-                        push_node(&ident, TT_ENUM_MEMBER, out);
-                    }
-                }
-            }
+            collect_enum_member_tokens(node, out);
             // Don't recurse into enum body.
             return;
         }
@@ -146,9 +145,31 @@ fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u
         _ => {}
     }
 
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         collect_tokens(&child, source, out);
+    }
+}
+
+fn collect_enum_member_tokens(node: &tree_sitter::Node, out: &mut Vec<(u32, u32, u32, u32)>) {
+    for i in 0..node.child_count() as u32 {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() == "enumerator_list" {
+            for j in 0..child.child_count() as u32 {
+                let Some(enumerator) = child.child(j) else {
+                    continue;
+                };
+                if enumerator.kind() == "enumerator" {
+                    if let Some(ident) = first_named_child(&enumerator) {
+                        push_node(&ident, TT_ENUM_MEMBER, out);
+                    }
+                }
+            }
+        } else if child.kind() == "enumerator" {
+            if let Some(ident) = first_named_child(&child) {
+                push_node(&ident, TT_ENUM_MEMBER, out);
+            }
+        }
     }
 }
 
@@ -162,29 +183,38 @@ fn push_node(node: &tree_sitter::Node, token_type: u32, out: &mut Vec<(u32, u32,
     if len == 0 {
         return;
     }
-    out.push((start.row as u32, start.column as u32, len as u32, token_type));
+    out.push((
+        start.row as u32,
+        start.column as u32,
+        len as u32,
+        token_type,
+    ));
 }
 
 fn find_child_kind<'a>(node: &'a tree_sitter::Node, kind: &str) -> Option<tree_sitter::Node<'a>> {
-    (0..node.child_count())
+    (0..node.child_count() as u32)
         .filter_map(|i| node.child(i))
         .find(|c| c.kind() == kind)
 }
 
 fn first_named_child<'a>(node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
-    (0..node.child_count())
+    (0..node.child_count() as u32)
         .filter_map(|i| node.child(i))
-        .find(|c| c.is_named())
+        .find(tree_sitter::Node::is_named)
 }
 
 #[cfg(test)]
 mod tests {
-    use gdscript_parser::parse::parse;
     use super::*;
+    use gdscript_parser::parse::parse;
 
     fn token_types_in(src: &str) -> Vec<u32> {
         let doc = parse(src).unwrap();
-        semantic_tokens(&doc).data.iter().map(|t| t.token_type).collect()
+        semantic_tokens(&doc)
+            .data
+            .iter()
+            .map(|t| t.token_type)
+            .collect()
     }
 
     #[test]
@@ -238,9 +268,15 @@ mod tests {
         let src = "func foo():\n\tpass\nfunc bar():\n\tpass\n";
         let doc = parse(src).unwrap();
         let tokens = semantic_tokens(&doc).data;
-        let func_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == TT_FUNCTION).collect();
+        let func_tokens: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.token_type == TT_FUNCTION)
+            .collect();
         assert!(func_tokens.len() >= 2);
         assert_eq!(func_tokens[0].delta_line, 0);
-        assert!(func_tokens[1].delta_line > 0, "second func should have non-zero deltaLine");
+        assert!(
+            func_tokens[1].delta_line > 0,
+            "second func should have non-zero deltaLine"
+        );
     }
 }

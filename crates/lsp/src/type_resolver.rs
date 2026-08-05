@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use gdscript_parser::ParsedDocument;
 
-/// Annotation-based type map for a single GDScript file.
+/// Annotation-based type map for a single `GDScript` file.
 #[derive(Debug, Default)]
 pub struct TypeMap {
     pub types: HashMap<String, String>,
@@ -19,7 +19,7 @@ impl TypeMap {
     }
 }
 
-/// Extract explicit type annotations from a parsed GDScript document.
+/// Extract explicit type annotations from a parsed `GDScript` document.
 #[must_use]
 pub fn extract_types(doc: &ParsedDocument) -> TypeMap {
     extract_types_impl(doc, None)
@@ -35,6 +35,7 @@ pub fn extract_types(doc: &ParsedDocument) -> TypeMap {
 ///
 /// # LAB-700
 #[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn extract_types_with_scene(
     doc: &ParsedDocument,
     scene_map: &HashMap<String, String>,
@@ -42,17 +43,20 @@ pub fn extract_types_with_scene(
     extract_types_impl(doc, Some(scene_map))
 }
 
-fn extract_types_impl(doc: &ParsedDocument, scene_map: Option<&HashMap<String, String>>) -> TypeMap {
+fn extract_types_impl(
+    doc: &ParsedDocument,
+    scene_map: Option<&HashMap<String, String>>,
+) -> TypeMap {
     let mut map = TypeMap::default();
     let source = doc.source.as_bytes();
     let root = doc.tree.root_node();
 
-    for i in 0..root.child_count() {
+    for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         match node.kind() {
             "extends_statement" => {
                 // The type node is the first named child (no field name in the grammar).
-                for i in 0..node.child_count() {
+                for i in 0..node.child_count() as u32 {
                     let Some(child) = node.child(i) else { continue };
                     if child.kind() == "type" {
                         if let Some(name) = type_ident(&child, source) {
@@ -103,8 +107,12 @@ fn extract_onready_inferred_type(
         return;
     }
     // Get the variable name.
-    let Some(name_node) = node.child_by_field_name("name") else { return };
-    let Ok(name) = name_node.utf8_text(source) else { return };
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let Ok(name) = name_node.utf8_text(source) else {
+        return;
+    };
     // Already resolved by explicit annotation — don't overwrite.
     if out.contains_key(name) {
         return;
@@ -115,7 +123,9 @@ fn extract_onready_inferred_type(
     if rhs.kind() != "get_node" {
         return;
     }
-    let Ok(rhs_text) = rhs.utf8_text(source) else { return };
+    let Ok(rhs_text) = rhs.utf8_text(source) else {
+        return;
+    };
     if let Some(ty) = resolve_dollar_path(rhs_text, scene_map) {
         out.insert(name.to_owned(), ty);
     }
@@ -124,13 +134,13 @@ fn extract_onready_inferred_type(
 /// Returns `true` if a statement has an `annotations` child containing `@name`.
 /// Handles both `annotations > annotation > identifier` structure.
 fn has_annotation(node: &tree_sitter::Node, source: &[u8], name: &str) -> bool {
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         if child.kind() == "annotations" {
-            for j in 0..child.child_count() {
+            for j in 0..child.child_count() as u32 {
                 let Some(ann) = child.child(j) else { continue };
                 if ann.kind() == "annotation" {
-                    for k in 0..ann.child_count() {
+                    for k in 0..ann.child_count() as u32 {
                         let Some(inner) = ann.child(k) else { continue };
                         if inner.is_named() && inner.utf8_text(source).ok() == Some(name) {
                             return true;
@@ -146,7 +156,7 @@ fn has_annotation(node: &tree_sitter::Node, source: &[u8], name: &str) -> bool {
 /// Returns the first named node after `=` in a statement.
 fn rhs_node<'a>(stmt: &'a tree_sitter::Node) -> Option<tree_sitter::Node<'a>> {
     let mut after_eq = false;
-    for i in 0..stmt.child_count() {
+    for i in 0..stmt.child_count() as u32 {
         let Some(child) = stmt.child(i) else { continue };
         if child.kind() == "=" {
             after_eq = true;
@@ -171,16 +181,24 @@ fn extract_var_type(node: &tree_sitter::Node, source: &[u8], out: &mut HashMap<S
     }
 }
 
-fn extract_func_types(func_node: &tree_sitter::Node, source: &[u8], out: &mut HashMap<String, String>) {
-    for i in 0..func_node.child_count() {
-        let Some(child) = func_node.child(i) else { continue };
+fn extract_func_types(
+    func_node: &tree_sitter::Node,
+    source: &[u8],
+    out: &mut HashMap<String, String>,
+) {
+    for i in 0..func_node.child_count() as u32 {
+        let Some(child) = func_node.child(i) else {
+            continue;
+        };
         if child.kind() == "parameters" {
-            for j in 0..child.child_count() {
-                let Some(param) = child.child(j) else { continue };
+            for j in 0..child.child_count() as u32 {
+                let Some(param) = child.child(j) else {
+                    continue;
+                };
                 if param.kind() == "typed_parameter" {
                     let mut ident: Option<String> = None;
                     let mut type_name: Option<String> = None;
-                    for k in 0..param.child_count() {
+                    for k in 0..param.child_count() as u32 {
                         let Some(p) = param.child(k) else { continue };
                         if p.kind() == "identifier" && ident.is_none() {
                             ident = p.utf8_text(source).ok().map(str::to_owned);
@@ -200,8 +218,12 @@ fn extract_func_types(func_node: &tree_sitter::Node, source: &[u8], out: &mut Ha
     }
 }
 
-fn extract_body_var_types(body: &tree_sitter::Node, source: &[u8], out: &mut HashMap<String, String>) {
-    for i in 0..body.child_count() {
+fn extract_body_var_types(
+    body: &tree_sitter::Node,
+    source: &[u8],
+    out: &mut HashMap<String, String>,
+) {
+    for i in 0..body.child_count() as u32 {
         let Some(child) = body.child(i) else { continue };
         if child.kind() == "variable_statement" {
             extract_var_type(&child, source, out);
@@ -227,18 +249,26 @@ fn extract_lambda_param_types(
         return;
     }
     // Lambda params live in the `parameters` field.
-    let Some(params) = rhs.child_by_field_name("parameters") else { return };
+    let Some(params) = rhs.child_by_field_name("parameters") else {
+        return;
+    };
     extract_params_types(&params, source, out);
 }
 
 /// Extract typed parameters from a `parameters` node into `out`.
-fn extract_params_types(params: &tree_sitter::Node, source: &[u8], out: &mut HashMap<String, String>) {
-    for i in 0..params.child_count() {
-        let Some(param) = params.child(i) else { continue };
+fn extract_params_types(
+    params: &tree_sitter::Node,
+    source: &[u8],
+    out: &mut HashMap<String, String>,
+) {
+    for i in 0..params.child_count() as u32 {
+        let Some(param) = params.child(i) else {
+            continue;
+        };
         if param.kind() == "typed_parameter" {
             let mut ident: Option<String> = None;
             let mut type_name: Option<String> = None;
-            for k in 0..param.child_count() {
+            for k in 0..param.child_count() as u32 {
                 let Some(p) = param.child(k) else { continue };
                 if p.kind() == "identifier" && ident.is_none() {
                     ident = p.utf8_text(source).ok().map(str::to_owned);
@@ -262,14 +292,18 @@ fn infer_subscript_type(
     out: &mut HashMap<String, String>,
 ) {
     // Skip if already has an explicit type or was resolved above.
-    let has_type = (0..stmt.child_count())
+    let has_type = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .any(|n| n.kind() == "type");
     if has_type {
         return;
     }
-    let Some(name_node) = stmt.child_by_field_name("name") else { return };
-    let Ok(var_name) = name_node.utf8_text(source) else { return };
+    let Some(name_node) = stmt.child_by_field_name("name") else {
+        return;
+    };
+    let Ok(var_name) = name_node.utf8_text(source) else {
+        return;
+    };
     if out.contains_key(var_name) {
         return;
     }
@@ -280,14 +314,20 @@ fn infer_subscript_type(
         return;
     }
     // First named child of subscript is the receiver.
-    let receiver_node = (0..rhs.child_count())
+    let receiver_node = (0..rhs.child_count() as u32)
         .filter_map(|i| rhs.child(i))
-        .find(|n| n.is_named());
-    let Some(receiver_node) = receiver_node else { return };
-    let Ok(receiver_name) = receiver_node.utf8_text(source) else { return };
+        .find(tree_sitter::Node::is_named);
+    let Some(receiver_node) = receiver_node else {
+        return;
+    };
+    let Ok(receiver_name) = receiver_node.utf8_text(source) else {
+        return;
+    };
 
     let collection_type = out.get(receiver_name).cloned();
-    let Some(collection_type) = collection_type else { return };
+    let Some(collection_type) = collection_type else {
+        return;
+    };
 
     // Extract element type from "Array[T]" or "Dictionary[K, V]" (last type arg).
     if let Some(element_type) = extract_generic_element_type(&collection_type) {
@@ -312,8 +352,10 @@ pub fn extract_generic_element_type(type_name: &str) -> Option<String> {
 }
 
 fn type_ident<'a>(type_node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
-    for i in 0..type_node.child_count() {
-        let Some(child) = type_node.child(i) else { continue };
+    for i in 0..type_node.child_count() as u32 {
+        let Some(child) = type_node.child(i) else {
+            continue;
+        };
         if child.is_named() {
             // For generic/subscript types like Array[Node2D], return the full text
             // so type checking and hover can show "Array[Node2D]".
@@ -333,6 +375,7 @@ fn type_ident<'a>(type_node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a
 ///
 /// # LAB-695, LAB-696
 #[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn resolve_dollar_path(
     node_text: &str,
     scene_map: &std::collections::HashMap<String, String>,
@@ -359,7 +402,7 @@ pub fn resolve_as_cast(node: &tree_sitter::Node, source: &[u8]) -> Option<String
         return None;
     }
     let mut found_as = false;
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         if !found_as {
             if child.kind() == "as" {
@@ -396,11 +439,10 @@ pub fn resolve_ternary_type(
     // tree-sitter-gdscript grammar for ternary:
     //   if_expression: <value_if_true> "if" <condition> "else" <value_if_false>
     // Named children (is_named == true, non-keyword) in order: true_branch, cond, false_branch.
-    let named_children: Vec<tree_sitter::Node> =
-        (0..node.child_count())
-            .filter_map(|i| node.child(i))
-            .filter(|c| c.is_named())
-            .collect();
+    let named_children: Vec<tree_sitter::Node> = (0..node.child_count() as u32)
+        .filter_map(|i| node.child(i))
+        .filter(tree_sitter::Node::is_named)
+        .collect();
 
     // We expect at least 3 named children: true_expr, condition, false_expr.
     if named_children.len() < 3 {
@@ -434,8 +476,8 @@ pub fn resolve_ternary_type(
 
 #[cfg(test)]
 mod tests {
-    use gdscript_parser::parse::parse;
     use super::*;
+    use gdscript_parser::parse::parse;
 
     fn types(src: &str) -> TypeMap {
         let doc = parse(src).unwrap();
@@ -567,7 +609,10 @@ mod tests {
         let mut scene_map = HashMap::new();
         scene_map.insert("Node2D".to_owned(), "Node2D".to_owned());
         let map = types_with_scene("@onready var x = get_node(\"Foo\")\n", &scene_map);
-        assert!(map.resolve("x").is_none(), "should not infer type from non-$ RHS");
+        assert!(
+            map.resolve("x").is_none(),
+            "should not infer type from non-$ RHS"
+        );
     }
 
     #[test]
@@ -589,9 +634,9 @@ mod tests {
 
     // --- LAB-708 / F-1: as cast type narrowing ---
 
-    fn find_as_binary<'a>(node: tree_sitter::Node<'a>, source: &[u8]) -> Option<tree_sitter::Node<'a>> {
+    fn find_as_binary(node: tree_sitter::Node<'_>) -> Option<tree_sitter::Node<'_>> {
         if node.kind() == "binary_operator" || node.kind() == "cast_expression" {
-            for i in 0..node.child_count() {
+            for i in 0..node.child_count() as u32 {
                 if let Some(child) = node.child(i) {
                     if child.kind() == "as" {
                         return Some(node);
@@ -599,9 +644,9 @@ mod tests {
                 }
             }
         }
-        for i in 0..node.child_count() {
+        for i in 0..node.child_count() as u32 {
             if let Some(child) = node.child(i) {
-                if let Some(found) = find_as_binary(child, source) {
+                if let Some(found) = find_as_binary(child) {
                     return Some(found);
                 }
             }
@@ -614,9 +659,12 @@ mod tests {
         let src = "func _ready():\n\tvar x = node as Sprite2D\n";
         let doc = parse(src).unwrap();
         let source = doc.source.as_bytes();
-        let cast_node = find_as_binary(doc.tree.root_node(), source)
+        let cast_node = find_as_binary(doc.tree.root_node())
             .expect("binary_operator with 'as' not found in AST");
-        assert_eq!(resolve_as_cast(&cast_node, source), Some("Sprite2D".to_owned()));
+        assert_eq!(
+            resolve_as_cast(&cast_node, source),
+            Some("Sprite2D".to_owned())
+        );
     }
 
     #[test]
