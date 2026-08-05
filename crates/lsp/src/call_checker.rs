@@ -41,7 +41,7 @@ fn walk(
         _ => {}
     }
 
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         walk(&child, source, type_map, api_db, project_index, out);
     }
@@ -61,7 +61,7 @@ fn check_attribute_call(
     let mut receiver_name: Option<&str> = None;
     let mut call_node: Option<tree_sitter::Node> = None;
 
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         match child.kind() {
             "identifier" if receiver_name.is_none() => {
@@ -91,7 +91,7 @@ fn check_attribute_call(
         let mut method_name: Option<&str> = None;
         let mut args_node: Option<tree_sitter::Node> = None;
 
-        for i in 0..call.child_count() {
+        for i in 0..call.child_count() as u32 {
             let Some(child) = call.child(i) else { continue };
             match child.kind() {
                 "identifier" => method_name = child.utf8_text(source).ok(),
@@ -130,14 +130,16 @@ fn check_autoload_member(
 
     // Extract the method/property identifier from the attribute_call node.
     let mut method_node: Option<tree_sitter::Node> = None;
-    for i in 0..call.child_count() {
+    for i in 0..call.child_count() as u32 {
         let Some(child) = call.child(i) else { continue };
         if child.kind() == "identifier" {
             method_node = Some(child);
             break;
         }
     }
-    let Some(method_node) = method_node else { return };
+    let Some(method_node) = method_node else {
+        return;
+    };
     let Ok(method_name) = method_node.utf8_text(source) else {
         return;
     };
@@ -151,7 +153,7 @@ fn check_autoload_member(
         out.push(error_diag(
             node_range(&method_node),
             "E0004",
-            format!("`{}` has no member `{}`", receiver, method_name),
+            format!("`{receiver}` has no member `{method_name}`"),
         ));
     }
 }
@@ -164,15 +166,14 @@ fn check_bare_call(
     api_db: &ApiDb,
     out: &mut Vec<Diagnostic>,
 ) {
-    let self_type = match type_map.self_type.as_deref() {
-        Some(t) => t,
-        None => return,
+    let Some(self_type) = type_map.self_type.as_deref() else {
+        return;
     };
 
     let mut method_name: Option<&str> = None;
     let mut args_node: Option<tree_sitter::Node> = None;
 
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         match child.kind() {
             "identifier" => method_name = child.utf8_text(source).ok(),
@@ -205,9 +206,9 @@ fn check_args(
     let Some(method) = method else { return };
 
     // Collect actual argument nodes (skip punctuation).
-    let arg_nodes: Vec<tree_sitter::Node> = (0..args_node.child_count())
+    let arg_nodes: Vec<tree_sitter::Node> = (0..args_node.child_count() as u32)
         .filter_map(|i| args_node.child(i))
-        .filter(|n| n.is_named())
+        .filter(tree_sitter::Node::is_named)
         .collect();
 
     let expected = method.arguments.len();
@@ -231,10 +232,7 @@ fn check_args(
                 got
             )
         } else {
-            format!(
-                "`{}` expects {}-{} arguments, got {}",
-                method_name, required, expected, got
-            )
+            format!("`{method_name}` expects {required}-{expected} arguments, got {got}")
         };
         out.push(diag(range, msg));
         return;
@@ -267,15 +265,17 @@ fn diag(range: tower_lsp::lsp_types::Range, message: String) -> Diagnostic {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::type_resolver::extract_types;
     use gdscript_api_db::ApiDb;
     use gdscript_core::symbol::{SymbolDef, SymbolKind};
     use gdscript_indexer::ProjectIndex;
     use gdscript_parser::parse::parse;
     use std::path::PathBuf;
-    use super::*;
-    use crate::type_resolver::extract_types;
 
-    fn db() -> ApiDb { ApiDb::bundled().unwrap() }
+    fn db() -> ApiDb {
+        ApiDb::bundled().unwrap()
+    }
 
     fn diags(src: &str) -> Vec<Diagnostic> {
         let db = db();
@@ -379,7 +379,7 @@ mod tests {
             }],
         );
         let d = check_calls(&doc, &type_map, &db, &index);
-        assert!(d.is_empty(), "unexpected diagnostic: {:?}", d);
+        assert!(d.is_empty(), "unexpected diagnostic: {d:?}");
     }
 
     #[test]

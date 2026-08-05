@@ -27,8 +27,8 @@ pub fn parse(content: &str) -> SceneNodeMap {
 
 /// Extract a quoted attribute value from a `.tscn` header line.
 /// e.g. `attr([node name="Foo" type="Node2D"], "name")` → `Some("Foo")`
-fn attr<'a>(line: &'a str, key: &str) -> Option<String> {
-    let needle = format!("{}=\"", key);
+fn attr(line: &str, key: &str) -> Option<String> {
+    let needle = format!("{key}=\"");
     let start = line.find(&needle)? + needle.len();
     let rest = &line[start..];
     let end = rest.find('"')?;
@@ -52,7 +52,10 @@ mod tests {
         let map = parse(src);
         assert_eq!(map.len(), 2);
         assert_eq!(map.get("Root").map(String::as_str), Some("Node2D"));
-        assert_eq!(map.get("Player").map(String::as_str), Some("CharacterBody2D"));
+        assert_eq!(
+            map.get("Player").map(String::as_str),
+            Some("CharacterBody2D")
+        );
     }
 
     #[test]

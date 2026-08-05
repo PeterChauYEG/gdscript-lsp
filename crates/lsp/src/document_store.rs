@@ -28,6 +28,7 @@ impl DocumentStore {
     }
 
     /// Return a snapshot of all open documents.
+    #[must_use]
     pub fn all(&self) -> HashMap<Url, String> {
         self.documents.clone()
     }

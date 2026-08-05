@@ -11,7 +11,7 @@ use crate::type_util::infer_literal_type;
 pub fn code_actions_for(
     uri: &Url,
     source: &str,
-    _range: &Range,
+    range: &Range,
     diagnostics: &[Diagnostic],
 ) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
@@ -25,22 +25,22 @@ pub fn code_actions_for(
         match code {
             "W0001" => {
                 // Unused variable — offer to remove the declaration line.
-                if let Some(action) = remove_var_action(uri, source, diag) {
-                    actions.push(CodeActionOrCommand::CodeAction(action));
-                }
+                actions.push(CodeActionOrCommand::CodeAction(remove_var_action(
+                    uri, source, diag,
+                )));
             }
             "W0002" => {
                 // Missing return — offer to append a bare `return`.
-                if let Some(action) = add_return_action(uri, diag) {
-                    actions.push(CodeActionOrCommand::CodeAction(action));
-                }
+                actions.push(CodeActionOrCommand::CodeAction(add_return_action(
+                    uri, diag,
+                )));
             }
             _ => {}
         }
     }
 
     // Offer "Add type annotation" for untyped vars with literal RHS at the range.
-    if let Some(action) = add_type_annotation_action(uri, source, _range, diagnostics) {
+    if let Some(action) = add_type_annotation_action(uri, source, range, diagnostics) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
@@ -48,7 +48,7 @@ pub fn code_actions_for(
 }
 
 /// "Remove unused variable" — deletes the entire declaration line.
-fn remove_var_action(uri: &Url, source: &str, diag: &Diagnostic) -> Option<CodeAction> {
+fn remove_var_action(uri: &Url, source: &str, diag: &Diagnostic) -> CodeAction {
     let line = diag.range.start.line;
     let line_count = source.lines().count() as u32;
     let end_line = (line + 1).min(line_count);
@@ -57,22 +57,25 @@ fn remove_var_action(uri: &Url, source: &str, diag: &Diagnostic) -> Option<CodeA
         uri,
         Range {
             start: Position { line, character: 0 },
-            end: Position { line: end_line, character: 0 },
+            end: Position {
+                line: end_line,
+                character: 0,
+            },
         },
         String::new(),
     );
 
-    Some(CodeAction {
+    CodeAction {
         title: "Remove unused variable".to_owned(),
         kind: Some(CodeActionKind::QUICKFIX),
         diagnostics: Some(vec![diag.clone()]),
         edit: Some(edit),
         ..Default::default()
-    })
+    }
 }
 
 /// "Add return statement" — appends `\treturn` after the function body's last line.
-fn add_return_action(uri: &Url, diag: &Diagnostic) -> Option<CodeAction> {
+fn add_return_action(uri: &Url, diag: &Diagnostic) -> CodeAction {
     let line = diag.range.end.line + 1;
     let edit = single_file_edit(
         uri,
@@ -83,13 +86,13 @@ fn add_return_action(uri: &Url, diag: &Diagnostic) -> Option<CodeAction> {
         "\treturn\n".to_owned(),
     );
 
-    Some(CodeAction {
+    CodeAction {
         title: "Add return statement".to_owned(),
         kind: Some(CodeActionKind::QUICKFIX),
         diagnostics: Some(vec![diag.clone()]),
         edit: Some(edit),
         ..Default::default()
-    })
+    }
 }
 
 /// "Add type annotation" — offered for untyped `var x = <literal>` where we can
@@ -101,7 +104,9 @@ fn add_type_annotation_action(
     _diagnostics: &[Diagnostic],
 ) -> Option<CodeAction> {
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_gdscript::LANGUAGE.into()).ok()?;
+    parser
+        .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+        .ok()?;
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
     let bytes = source.as_bytes();
@@ -124,7 +129,7 @@ fn find_untyped_var_in_range(
         }
     }
 
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let child = node.child(i)?;
         if let Some(action) = find_untyped_var_in_range(&child, source, range, uri) {
             return Some(action);
@@ -139,7 +144,7 @@ fn type_annotation_for_var(
     uri: &Url,
 ) -> Option<CodeAction> {
     // Skip if already typed
-    let has_type = (0..stmt.child_count())
+    let has_type = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .any(|n| n.kind() == "type");
     if has_type {
@@ -147,14 +152,14 @@ fn type_annotation_for_var(
     }
 
     // Find name node
-    let name_node = (0..stmt.child_count())
+    let name_node = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .find(|n| n.kind() == "name")?;
     let name = name_node.utf8_text(source).ok()?;
 
     // Find RHS literal
     let mut after_eq = false;
-    let value = (0..stmt.child_count()).find_map(|i| {
+    let value = (0..stmt.child_count() as u32).find_map(|i| {
         let child = stmt.child(i)?;
         if child.kind() == "=" {
             after_eq = true;
@@ -177,7 +182,10 @@ fn type_annotation_for_var(
 
     let edit = single_file_edit(
         uri,
-        Range { start: insert_pos, end: insert_pos },
+        Range {
+            start: insert_pos,
+            end: insert_pos,
+        },
         format!(": {type_name}"),
     );
 
@@ -193,7 +201,10 @@ fn type_annotation_for_var(
 fn single_file_edit(uri: &Url, range: Range, new_text: String) -> WorkspaceEdit {
     let mut changes = std::collections::HashMap::new();
     changes.insert(uri.clone(), vec![TextEdit { range, new_text }]);
-    WorkspaceEdit { changes: Some(changes), ..Default::default() }
+    WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
@@ -210,7 +221,10 @@ mod tests {
         Diagnostic {
             range: Range {
                 start: Position { line, character: 0 },
-                end: Position { line, character: 10 },
+                end: Position {
+                    line,
+                    character: 10,
+                },
             },
             severity: Some(DiagnosticSeverity::WARNING),
             code: Some(NumberOrString::String(code.to_owned())),
@@ -224,8 +238,14 @@ mod tests {
         let src = "var x = 1\nvar y = 2\n";
         let diags = vec![diag("W0001", 0)];
         let range = Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 10 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &diags);
         assert!(actions.iter().any(|a| {
@@ -238,8 +258,14 @@ mod tests {
         let src = "func foo() -> int:\n\tvar x = 1\n";
         let diags = vec![diag("W0002", 1)];
         let range = Range {
-            start: Position { line: 1, character: 0 },
-            end: Position { line: 1, character: 10 },
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 10,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &diags);
         assert!(actions.iter().any(|a| {
@@ -251,8 +277,14 @@ mod tests {
     fn type_annotation_offered_for_untyped_int_var() {
         let src = "var x = 42\n";
         let range = Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 10 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &[]);
         assert!(actions.iter().any(|a| {
@@ -264,8 +296,14 @@ mod tests {
     fn no_type_annotation_for_already_typed_var() {
         let src = "var x: int = 42\n";
         let range = Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 15 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 15,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &[]);
         let has_type_action = actions.iter().any(|a| {
@@ -278,8 +316,14 @@ mod tests {
     fn no_type_annotation_for_expression_rhs() {
         let src = "var x = get_node(\"/root\")\n";
         let range = Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 25 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 25,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &[]);
         let has_type_action = actions.iter().any(|a| {
@@ -295,12 +339,18 @@ mod tests {
         let src = "func foo():\n\treturn\n\tvar x = 1\n";
         let diags = vec![diag("W0003", 2)];
         let range = Range {
-            start: Position { line: 2, character: 0 },
-            end: Position { line: 2, character: 10 },
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 10,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &diags);
         let has_fix = actions.iter().any(|a| {
-            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().map_or(false, |ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("W0003".to_owned())))))
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().is_some_and(|ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("W0003".to_owned())))))
         });
         assert!(!has_fix, "W0003 should not produce a quick-fix action");
     }
@@ -310,12 +360,18 @@ mod tests {
         let src = "func foo(a: int):\n\tpass\n";
         let diags = vec![diag("E0002", 0)];
         let range = Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 10 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &diags);
         let has_fix = actions.iter().any(|a| {
-            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().map_or(false, |ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("E0002".to_owned())))))
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().is_some_and(|ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("E0002".to_owned())))))
         });
         assert!(!has_fix, "E0002 should not produce a quick-fix action");
     }
@@ -325,12 +381,18 @@ mod tests {
         let src = "var x: int = \"oops\"\n";
         let diags = vec![diag("E0003", 0)];
         let range = Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 20 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 20,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &diags);
         let has_fix = actions.iter().any(|a| {
-            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().map_or(false, |ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("E0003".to_owned())))))
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.diagnostics.as_ref().is_some_and(|ds| ds.iter().any(|d| d.code == Some(NumberOrString::String("E0003".to_owned())))))
         });
         assert!(!has_fix, "E0003 should not produce a quick-fix action");
     }
@@ -342,15 +404,24 @@ mod tests {
         let src = "var x = 1\nfunc foo() -> int:\n\tvar y = 2\n";
         let diags = vec![diag("W0001", 0), diag("W0002", 2)];
         let range = Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 2, character: 10 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 10,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &diags);
         let fix_count = actions
             .iter()
             .filter(|a| matches!(a, CodeActionOrCommand::CodeAction(_)))
             .count();
-        assert!(fix_count >= 2, "expected at least two actions, got {fix_count}");
+        assert!(
+            fix_count >= 2,
+            "expected at least two actions, got {fix_count}"
+        );
     }
 
     // --- add_return_action new_text content ---
@@ -360,17 +431,33 @@ mod tests {
         let src = "func foo() -> int:\n\tvar x = 1\n";
         let diags = vec![diag("W0002", 1)];
         let range = Range {
-            start: Position { line: 1, character: 0 },
-            end: Position { line: 1, character: 10 },
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 10,
+            },
         };
         let actions = code_actions_for(&uri(), src, &range, &diags);
         let inserted: Vec<_> = actions
             .iter()
             .filter_map(|a| {
                 if let CodeActionOrCommand::CodeAction(ca) = a {
-                    ca.edit.as_ref()?.changes.as_ref()?.values().next().map(|edits| {
-                        edits.iter().map(|e| e.new_text.as_str()).collect::<Vec<_>>().join("")
-                    })
+                    ca.edit
+                        .as_ref()?
+                        .changes
+                        .as_ref()?
+                        .values()
+                        .next()
+                        .map(|edits| {
+                            edits
+                                .iter()
+                                .map(|e| e.new_text.as_str())
+                                .collect::<Vec<_>>()
+                                .join("")
+                        })
                 } else {
                     None
                 }

@@ -6,7 +6,7 @@ use crate::diagnostics::{Diagnostic, Severity};
 /// - W0001: unused local variable
 /// - W0002: function with declared return type missing a return on some path
 /// - W0003: unreachable code after return/break/continue
-/// - W0004: file missing class_name declaration (plugin.gd exempt)
+/// - W0004: file missing `class_name` declaration (plugin.gd exempt)
 /// - W0005: match statement missing enum variants (non-exhaustive)
 #[must_use]
 pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
@@ -20,7 +20,7 @@ pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
     // Build a map of enum_name → Vec<variant_name> for exhaustiveness checks.
     let enum_map = collect_enum_definitions(&root, source);
 
-    for i in 0..root.child_count() {
+    for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         match node.kind() {
             "class_name_statement" => has_class_name = true,
@@ -62,28 +62,32 @@ fn collect_enum_definitions(
     source: &[u8],
 ) -> std::collections::HashMap<String, Vec<String>> {
     let mut map = std::collections::HashMap::new();
-    for i in 0..root.child_count() {
+    for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         if node.kind() != "enum_definition" {
             continue;
         }
         // Named enum: `enum Dir { UP, DOWN }` — anonymous enums are ignored.
-        let name_node = (0..node.child_count())
+        let name_node = (0..node.child_count() as u32)
             .filter_map(|j| node.child(j))
             .find(|n| n.kind() == "name");
         let Some(name_node) = name_node else { continue };
-        let Ok(enum_name) = name_node.utf8_text(source) else { continue };
+        let Ok(enum_name) = name_node.utf8_text(source) else {
+            continue;
+        };
 
         let mut variants = Vec::new();
-        for j in 0..node.child_count() {
+        for j in 0..node.child_count() as u32 {
             let Some(child) = node.child(j) else { continue };
             if child.kind() == "enumerator_list" {
-                for k in 0..child.child_count() {
-                    let Some(enumerator) = child.child(k) else { continue };
+                for k in 0..child.child_count() as u32 {
+                    let Some(enumerator) = child.child(k) else {
+                        continue;
+                    };
                     if enumerator.kind() == "enumerator" {
-                        if let Some(ident) = (0..enumerator.child_count())
+                        if let Some(ident) = (0..enumerator.child_count() as u32)
                             .filter_map(|m| enumerator.child(m))
-                            .find(|n| n.is_named())
+                            .find(tree_sitter::Node::is_named)
                         {
                             if let Ok(v) = ident.utf8_text(source) {
                                 variants.push(v.to_owned());
@@ -105,13 +109,13 @@ fn lint_match_exhaustiveness_in_func(
     enum_map: &std::collections::HashMap<String, Vec<String>>,
     out: &mut Vec<Diagnostic>,
 ) {
-    let Some(body) = (0..func.child_count())
+    let Some(body) = (0..func.child_count() as u32)
         .filter_map(|i| func.child(i))
         .find(|n| n.kind() == "body")
     else {
         return;
     };
-    for i in 0..body.child_count() {
+    for i in 0..body.child_count() as u32 {
         let Some(stmt) = body.child(i) else { continue };
         if stmt.kind() == "match_statement" {
             check_match_exhaustiveness(&stmt, source, enum_map, out);
@@ -132,21 +136,23 @@ fn check_match_exhaustiveness(
     enum_map: &std::collections::HashMap<String, Vec<String>>,
     out: &mut Vec<Diagnostic>,
 ) {
-    let Some(match_body) = match_stmt.child_by_field_name("body")
-        .or_else(|| (0..match_stmt.child_count()).filter_map(|i| match_stmt.child(i)).find(|n| n.kind() == "match_body"))
-    else {
+    let Some(match_body) = match_stmt.child_by_field_name("body").or_else(|| {
+        (0..match_stmt.child_count() as u32)
+            .filter_map(|i| match_stmt.child(i))
+            .find(|n| n.kind() == "match_body")
+    }) else {
         return;
     };
 
     // Gather all pattern_section nodes.
-    let sections: Vec<tree_sitter::Node> = (0..match_body.child_count())
+    let sections: Vec<tree_sitter::Node> = (0..match_body.child_count() as u32)
         .filter_map(|i| match_body.child(i))
         .filter(|n| n.kind() == "pattern_section")
         .collect();
 
     // If any pattern is a wildcard `_`, the match is exhaustive.
     let has_wildcard = sections.iter().any(|sec| {
-        (0..sec.child_count())
+        (0..sec.child_count() as u32)
             .filter_map(|i| sec.child(i))
             .any(|p| {
                 (p.kind() == "identifier" && p.utf8_text(source).ok() == Some("_"))
@@ -162,8 +168,10 @@ fn check_match_exhaustiveness(
     let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for sec in &sections {
-        for i in 0..sec.child_count() {
-            let Some(pattern) = sec.child(i) else { continue };
+        for i in 0..sec.child_count() as u32 {
+            let Some(pattern) = sec.child(i) else {
+                continue;
+            };
             // A member access pattern looks like `identifier "." identifier`.
             if pattern.kind() == "attribute" || pattern.kind() == "member_access" {
                 // Try to extract `lhs.rhs` from the node text.
@@ -186,10 +194,14 @@ fn check_match_exhaustiveness(
     }
 
     let Some(enum_name) = enum_name else { return };
-    let Some(all_variants) = enum_map.get(&enum_name) else { return };
+    let Some(all_variants) = enum_map.get(&enum_name) else {
+        return;
+    };
 
-    let missing: Vec<&String> =
-        all_variants.iter().filter(|v| !covered.contains(*v)).collect();
+    let missing: Vec<&String> = all_variants
+        .iter()
+        .filter(|v| !covered.contains(*v))
+        .collect();
 
     if !missing.is_empty() {
         let start = match_stmt.start_position();
@@ -212,16 +224,16 @@ fn check_match_exhaustiveness(
 }
 
 fn lint_function(func: &tree_sitter::Node, source: &[u8], out: &mut Vec<Diagnostic>) {
-    let Some(body) = (0..func.child_count())
+    let Some(body) = (0..func.child_count() as u32)
         .filter_map(|i| func.child(i))
         .find(|n| n.kind() == "body")
     else {
         return;
     };
 
-    let stmts: Vec<tree_sitter::Node> = (0..body.child_count())
+    let stmts: Vec<tree_sitter::Node> = (0..body.child_count() as u32)
         .filter_map(|i| body.child(i))
-        .filter(|n| n.is_named())
+        .filter(tree_sitter::Node::is_named)
         .collect();
 
     check_unreachable(&stmts, out);
@@ -271,10 +283,7 @@ fn check_missing_return(
         return;
     }
 
-    let last = stmts
-        .iter()
-        .rev()
-        .find(|n| n.kind() != "pass_statement");
+    let last = stmts.iter().rev().find(|n| n.kind() != "pass_statement");
 
     let needs_warning = match last {
         None => true,
@@ -285,7 +294,7 @@ fn check_missing_return(
     };
 
     if needs_warning {
-        if let Some(name_node) = (0..func.child_count())
+        if let Some(name_node) = (0..func.child_count() as u32)
             .filter_map(|i| func.child(i))
             .find(|n| n.kind() == "name")
         {
@@ -299,8 +308,7 @@ fn check_missing_return(
                 severity: Severity::Warning,
                 code: Some("W0002".to_owned()),
                 message: format!(
-                    "Function '{}' has return type '{}' but not all paths return a value",
-                    name_text, ret_type
+                    "Function '{name_text}' has return type '{ret_type}' but not all paths return a value"
                 ),
             });
         }
@@ -310,11 +318,11 @@ fn check_missing_return(
 /// Warn on local variables declared inside a function body that are never read.
 /// Variables prefixed with `_` are exempt (intentional unused convention).
 fn check_unused_locals(body: &tree_sitter::Node, source: &[u8], out: &mut Vec<Diagnostic>) {
-    let locals: Vec<(String, tree_sitter::Node)> = (0..body.child_count())
+    let locals: Vec<(String, tree_sitter::Node)> = (0..body.child_count() as u32)
         .filter_map(|i| body.child(i))
         .filter(|n| n.kind() == "variable_statement")
         .filter_map(|stmt| {
-            let name_node = (0..stmt.child_count())
+            let name_node = (0..stmt.child_count() as u32)
                 .filter_map(|j| stmt.child(j))
                 .find(|n| n.kind() == "name")?;
             let name = name_node.utf8_text(source).ok()?.to_owned();
@@ -349,7 +357,7 @@ fn count_identifier_uses(node: &tree_sitter::Node, source: &[u8], name: &str) ->
     if node.kind() == "identifier" && node.utf8_text(source).ok() == Some(name) {
         count += 1;
     }
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         if let Some(child) = node.child(i) {
             count += count_identifier_uses(&child, source, name);
         }
@@ -360,12 +368,12 @@ fn count_identifier_uses(node: &tree_sitter::Node, source: &[u8], name: &str) ->
 /// Get the declared return type text of a function, if present.
 fn get_return_type<'a>(func: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
     let mut after_arrow = false;
-    for i in 0..func.child_count() {
+    for i in 0..func.child_count() as u32 {
         let Some(child) = func.child(i) else { continue };
         match child.kind() {
             "->" => after_arrow = true,
             "type" if after_arrow => {
-                for j in 0..child.child_count() {
+                for j in 0..child.child_count() as u32 {
                     let Some(c) = child.child(j) else { continue };
                     if c.is_named() {
                         return c.utf8_text(source).ok();
@@ -390,10 +398,7 @@ mod tests {
     }
 
     fn codes(src: &str) -> Vec<String> {
-        diags(src)
-            .into_iter()
-            .filter_map(|d| d.code)
-            .collect()
+        diags(src).into_iter().filter_map(|d| d.code).collect()
     }
 
     // --- unused variables ---

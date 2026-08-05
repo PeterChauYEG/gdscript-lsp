@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
+#![allow(clippy::cast_possible_truncation)]
 
 mod commands;
 
@@ -40,7 +41,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Check(args)) => commands::check::run(args),
+        Some(Command::Check(args)) => commands::check::run(&args),
         None => run_lsp_server().await,
     }
 }

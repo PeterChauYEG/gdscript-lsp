@@ -19,7 +19,7 @@ pub fn check_type_mismatches(doc: &ParsedDocument, api_db: &ApiDb) -> Vec<Diagno
     // Collect declared types for reassignment checking.
     let declared_types = collect_declared_types(&root, source);
 
-    for i in 0..root.child_count() {
+    for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         match node.kind() {
             "variable_statement" => {
@@ -41,16 +41,18 @@ pub fn check_type_mismatches(doc: &ParsedDocument, api_db: &ApiDb) -> Vec<Diagno
 /// Returns `true` if the given `variable_statement` node has a decorator child
 /// whose identifier matches `name` (e.g. `"onready"` for `@onready`).
 ///
-/// The tree-sitter GDScript grammar represents `@onready` as a `decorator` node
+/// The tree-sitter `GDScript` grammar represents `@onready` as a `decorator` node
 /// whose first named child is an `identifier` containing `"onready"`.
 fn has_decorator(stmt: &tree_sitter::Node, source: &[u8], name: &str) -> bool {
-    for i in 0..stmt.child_count() {
+    for i in 0..stmt.child_count() as u32 {
         let Some(child) = stmt.child(i) else { continue };
         if child.kind() != "decorator" {
             continue;
         }
-        for j in 0..child.child_count() {
-            let Some(inner) = child.child(j) else { continue };
+        for j in 0..child.child_count() as u32 {
+            let Some(inner) = child.child(j) else {
+                continue;
+            };
             if inner.is_named() {
                 if let Ok(text) = inner.utf8_text(source) {
                     if text == name {
@@ -69,12 +71,13 @@ fn collect_declared_types<'a>(
     source: &'a [u8],
 ) -> HashMap<String, &'a str> {
     let mut map = HashMap::new();
-    for i in 0..root.child_count() {
+    for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         if node.kind() == "variable_statement" {
-            if let (Some(name), Some(ty)) =
-                (var_name_text(&node, source), declared_var_type(&node, source))
-            {
+            if let (Some(name), Some(ty)) = (
+                var_name_text(&node, source),
+                declared_var_type(&node, source),
+            ) {
                 map.insert(name.to_owned(), ty);
             }
         }
@@ -84,7 +87,7 @@ fn collect_declared_types<'a>(
 
 /// Get the `name` child text of a `variable_statement`.
 fn var_name_text<'a>(stmt: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
-    (0..stmt.child_count())
+    (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .find(|n| n.kind() == "name")
         .and_then(|n| n.utf8_text(source).ok())
@@ -98,36 +101,32 @@ fn check_reassignment(
     declared_types: &HashMap<String, &str>,
     out: &mut Vec<Diagnostic>,
 ) {
-    let assignment = match (0..stmt.child_count())
+    let Some(assignment) = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .find(|n| n.kind() == "assignment")
-    {
-        Some(a) => a,
-        None => return,
+    else {
+        return;
     };
 
     // LHS must be a bare identifier.
-    let lhs = match (0..assignment.child_count())
+    let Some(lhs) = (0..assignment.child_count() as u32)
         .filter_map(|i| assignment.child(i))
         .find(|n| n.is_named() && n.kind() == "identifier")
-    {
-        Some(n) => n,
-        None => return,
+    else {
+        return;
     };
 
-    let var_name = match lhs.utf8_text(source) {
-        Ok(s) => s,
-        Err(_) => return,
+    let Ok(var_name) = lhs.utf8_text(source) else {
+        return;
     };
 
-    let declared = match declared_types.get(var_name) {
-        Some(t) => *t,
-        None => return,
+    let Some(declared) = declared_types.get(var_name).copied() else {
+        return;
     };
 
     // RHS is the first named node after `=`.
     let mut after_eq = false;
-    let rhs = (0..assignment.child_count()).find_map(|i| {
+    let rhs = (0..assignment.child_count() as u32).find_map(|i| {
         let child = assignment.child(i)?;
         if child.kind() == "=" {
             after_eq = true;
@@ -140,7 +139,9 @@ fn check_reassignment(
     });
 
     let Some(rhs) = rhs else { return };
-    let Some(inferred) = infer_literal_type(&rhs) else { return };
+    let Some(inferred) = infer_literal_type(&rhs) else {
+        return;
+    };
 
     if !types_compatible(declared, inferred, api_db) {
         out.push(error_diag(
@@ -171,21 +172,18 @@ fn check_var_assignment(
     // ensures we never emit false positives for this pattern in the future).
     let _is_onready = has_decorator(stmt, source, "onready");
 
-    let declared = match declared_var_type(stmt, source) {
-        Some(t) => t,
-        None => return,
+    let Some(declared) = declared_var_type(stmt, source) else {
+        return;
     };
 
-    let value = match rhs_value(stmt) {
-        Some(v) => v,
-        None => return,
+    let Some(value) = rhs_value(stmt) else {
+        return;
     };
 
     // Node-path expressions and other non-literals are already silently skipped
     // here because `infer_literal_type` returns `None` for them.
-    let inferred = match infer_literal_type(&value) {
-        Some(t) => t,
-        None => return,
+    let Some(inferred) = infer_literal_type(&value) else {
+        return;
     };
 
     if !types_compatible(declared, inferred, api_db) {
@@ -209,12 +207,11 @@ fn check_function(
         _ => return,
     };
 
-    let body = match (0..func.child_count())
+    let Some(body) = (0..func.child_count() as u32)
         .filter_map(|i| func.child(i))
         .find(|n| n.kind() == "body")
-    {
-        Some(b) => b,
-        None => return,
+    else {
+        return;
     };
 
     check_returns_in_body(&body, ret_type, source, api_db, out);
@@ -227,7 +224,7 @@ fn check_returns_in_body(
     api_db: &ApiDb,
     out: &mut Vec<Diagnostic>,
 ) {
-    for i in 0..body.child_count() {
+    for i in 0..body.child_count() as u32 {
         let Some(stmt) = body.child(i) else { continue };
         match stmt.kind() {
             "return_statement" => {
@@ -235,7 +232,7 @@ fn check_returns_in_body(
             }
             "if_statement" | "while_statement" | "for_statement" => {
                 // Direct body children.
-                for j in 0..stmt.child_count() {
+                for j in 0..stmt.child_count() as u32 {
                     let Some(child) = stmt.child(j) else { continue };
                     if child.kind() == "body" {
                         check_returns_in_body(&child, ret_type, source, api_db, out);
@@ -244,18 +241,24 @@ fn check_returns_in_body(
             }
             "match_statement" => {
                 // match_statement → match_body → pattern_section → body
-                for j in 0..stmt.child_count() {
-                    let Some(match_body) = stmt.child(j) else { continue };
+                for j in 0..stmt.child_count() as u32 {
+                    let Some(match_body) = stmt.child(j) else {
+                        continue;
+                    };
                     if match_body.kind() != "match_body" {
                         continue;
                     }
-                    for k in 0..match_body.child_count() {
-                        let Some(section) = match_body.child(k) else { continue };
+                    for k in 0..match_body.child_count() as u32 {
+                        let Some(section) = match_body.child(k) else {
+                            continue;
+                        };
                         if section.kind() != "pattern_section" {
                             continue;
                         }
-                        for l in 0..section.child_count() {
-                            let Some(body) = section.child(l) else { continue };
+                        for l in 0..section.child_count() as u32 {
+                            let Some(body) = section.child(l) else {
+                                continue;
+                            };
                             if body.kind() == "body" {
                                 check_returns_in_body(&body, ret_type, source, api_db, out);
                             }
@@ -276,12 +279,14 @@ fn check_return_value(
     out: &mut Vec<Diagnostic>,
 ) {
     // The return value is the first named child of the return statement.
-    let value = (0..ret_stmt.child_count())
+    let value = (0..ret_stmt.child_count() as u32)
         .filter_map(|i| ret_stmt.child(i))
         .find(|n| n.is_named() && n.kind() != "return");
 
     let Some(value) = value else { return };
-    let Some(inferred) = infer_literal_type(&value) else { return };
+    let Some(inferred) = infer_literal_type(&value) else {
+        return;
+    };
 
     if !types_compatible(ret_type, inferred, api_db) {
         out.push(error_diag(
@@ -294,7 +299,7 @@ fn check_return_value(
 
 /// Get the declared type name from a `variable_statement`'s `: Type` annotation.
 fn declared_var_type<'a>(stmt: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
-    let type_node = (0..stmt.child_count())
+    let type_node = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .find(|n| n.kind() == "type")?;
     first_named_text(&type_node, source)
@@ -303,7 +308,7 @@ fn declared_var_type<'a>(stmt: &tree_sitter::Node, source: &'a [u8]) -> Option<&
 /// Get the RHS value node of a `variable_statement` (the node after `=`).
 fn rhs_value<'a>(stmt: &'a tree_sitter::Node) -> Option<tree_sitter::Node<'a>> {
     let mut after_eq = false;
-    for i in 0..stmt.child_count() {
+    for i in 0..stmt.child_count() as u32 {
         let Some(child) = stmt.child(i) else { continue };
         if child.kind() == "=" {
             after_eq = true;
@@ -317,7 +322,7 @@ fn rhs_value<'a>(stmt: &'a tree_sitter::Node) -> Option<tree_sitter::Node<'a>> {
 /// Get the declared return type of a `function_definition`.
 fn function_return_type<'a>(func: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
     let mut after_arrow = false;
-    for i in 0..func.child_count() {
+    for i in 0..func.child_count() as u32 {
         let Some(child) = func.child(i) else { continue };
         match child.kind() {
             "->" => after_arrow = true,
@@ -329,7 +334,7 @@ fn function_return_type<'a>(func: &tree_sitter::Node, source: &'a [u8]) -> Optio
 }
 
 fn first_named_text<'a>(node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         if child.is_named() {
             return child.utf8_text(source).ok();
@@ -535,6 +540,6 @@ mod tests {
         let db = db();
         let doc = gdscript_parser::parse::parse(src).unwrap();
         let diags = check_type_mismatches(&doc, &db);
-        assert!(diags.is_empty(), "unexpected diagnostic: {:?}", diags);
+        assert!(diags.is_empty(), "unexpected diagnostic: {diags:?}");
     }
 }

@@ -12,10 +12,7 @@ use crate::{ProjectIndex, error::IndexerError, index::index_workspace};
 /// # Errors
 ///
 /// Returns [`IndexerError::Watcher`] if the file watcher cannot be created.
-pub fn watch(
-    root: &Path,
-    index: Arc<RwLock<ProjectIndex>>,
-) -> Result<(), IndexerError> {
+pub fn watch(root: &Path, index: Arc<RwLock<ProjectIndex>>) -> Result<(), IndexerError> {
     let root = root.to_path_buf();
 
     tokio::task::spawn_blocking(move || {
@@ -30,14 +27,11 @@ pub fn watch(
             .map_err(|e| IndexerError::Watcher(e.to_string()))?;
 
         for result in rx {
-            let events = match result {
-                Ok(events) => events,
-                Err(_) => continue,
-            };
+            let Ok(events) = result else { continue };
 
-            let any_gd = events.iter().any(|e| {
-                e.path.extension().and_then(|x| x.to_str()) == Some("gd")
-            });
+            let any_gd = events
+                .iter()
+                .any(|e| e.path.extension().and_then(|x| x.to_str()) == Some("gd"));
 
             if any_gd {
                 let handle = tokio::runtime::Handle::try_current();

@@ -1,7 +1,7 @@
 use gdscript_parser::ParsedDocument;
 use tower_lsp::lsp_types::{DocumentLink, Position, Range, Url};
 
-/// Find all `res://` string literals in a GDScript document and return them
+/// Find all `res://` string literals in a `GDScript` document and return them
 /// as [`DocumentLink`]s that resolve to absolute filesystem paths.
 ///
 /// Only emits links for paths that exist on disk.
@@ -53,7 +53,7 @@ fn collect_links(
         return; // Don't recurse into string children.
     }
 
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let Some(child) = node.child(i) else { continue };
         collect_links(&child, source, workspace_root, out);
     }
@@ -61,9 +61,9 @@ fn collect_links(
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use gdscript_parser::parse::parse;
     use super::*;
+    use gdscript_parser::parse::parse;
+    use std::fs;
 
     #[test]
     fn res_path_that_exists_produces_link() {

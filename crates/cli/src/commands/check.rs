@@ -28,7 +28,39 @@ struct JsonDiag {
     message: String,
 }
 
-pub fn run(args: CheckArgs) -> Result<()> {
+fn collect_checker_diags(
+    doc: &gdscript_parser::ParsedDocument,
+) -> Vec<tower_lsp::lsp_types::Diagnostic> {
+    use gdscript_checker::diagnostics::Severity;
+    use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
+    let mut raw = gdscript_checker::syntax::syntax_errors(doc);
+    raw.extend(gdscript_checker::linting::lint(doc));
+    raw.into_iter()
+        .map(|d| Diagnostic {
+            range: Range {
+                start: Position {
+                    line: d.line,
+                    character: d.col,
+                },
+                end: Position {
+                    line: d.end_line,
+                    character: d.end_col,
+                },
+            },
+            severity: Some(match d.severity {
+                Severity::Error => DiagnosticSeverity::ERROR,
+                Severity::Warning => DiagnosticSeverity::WARNING,
+                Severity::Hint => DiagnosticSeverity::HINT,
+            }),
+            code: d.code.map(NumberOrString::String),
+            message: d.message,
+            source: Some("gdscript-lsp".to_owned()),
+            ..Default::default()
+        })
+        .collect::<Vec<_>>()
+}
+
+pub fn run(args: &CheckArgs) -> Result<()> {
     let api_db = gdscript_api_db::ApiDb::bundled().map_err(|e| anyhow::anyhow!("{e}"))?;
     let files = collect_gd_files(&args.path);
 
@@ -37,43 +69,27 @@ pub fn run(args: CheckArgs) -> Result<()> {
 
     for file in &files {
         let source = std::fs::read_to_string(file)?;
-        let doc = match gdscript_parser::parse::parse(&source) {
-            Ok(d) => d,
-            Err(_) => {
-                eprintln!("failed to parse {}", file.display());
-                has_error = true;
-                continue;
-            }
+        let Ok(doc) = gdscript_parser::parse::parse(&source) else {
+            eprintln!("failed to parse {}", file.display());
+            has_error = true;
+            continue;
         };
 
         let type_map = gdscript_lsp::type_resolver::extract_types(&doc);
 
         // Collect checker-crate diagnostics (syntax + lint) and convert to LSP
-        let checker_diags = {
-            use gdscript_checker::diagnostics::Severity;
-            use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
-            let mut raw = gdscript_checker::syntax::syntax_errors(&doc);
-            raw.extend(gdscript_checker::linting::lint(&doc));
-            raw.into_iter().map(|d| Diagnostic {
-                range: Range {
-                    start: Position { line: d.line, character: d.col },
-                    end: Position { line: d.end_line, character: d.end_col },
-                },
-                severity: Some(match d.severity {
-                    Severity::Error => DiagnosticSeverity::ERROR,
-                    Severity::Warning => DiagnosticSeverity::WARNING,
-                    Severity::Hint => DiagnosticSeverity::HINT,
-                }),
-                code: d.code.map(NumberOrString::String),
-                message: d.message,
-                source: Some("gdscript-lsp".to_owned()),
-                ..Default::default()
-            }).collect::<Vec<_>>()
-        };
+        let checker_diags = collect_checker_diags(&doc);
 
         let mut diags = checker_diags;
-        diags.extend(gdscript_lsp::type_check::check_type_mismatches(&doc, &api_db));
-        diags.extend(gdscript_lsp::call_checker::check_calls(&doc, &type_map, &api_db, &gdscript_indexer::index::ProjectIndex::new()));
+        diags.extend(gdscript_lsp::type_check::check_type_mismatches(
+            &doc, &api_db,
+        ));
+        diags.extend(gdscript_lsp::call_checker::check_calls(
+            &doc,
+            &type_map,
+            &api_db,
+            &gdscript_indexer::index::ProjectIndex::new(),
+        ));
 
         if args.strict {
             diags.extend(strict_checks(&doc));
@@ -108,7 +124,11 @@ pub fn run(args: CheckArgs) -> Result<()> {
         "json" => println!("{}", serde_json::to_string_pretty(&all_diags)?),
         "github" => {
             for d in &all_diags {
-                let level = if d.severity == "error" { "error" } else { "warning" };
+                let level = if d.severity == "error" {
+                    "error"
+                } else {
+                    "warning"
+                };
                 println!(
                     "::{level} file={},line={},col={}::{}",
                     d.file, d.line, d.col, d.message
@@ -117,7 +137,10 @@ pub fn run(args: CheckArgs) -> Result<()> {
         }
         _ => {
             for d in &all_diags {
-                println!("{}:{}:{}: {}: {}", d.file, d.line, d.col, d.severity, d.message);
+                println!(
+                    "{}:{}:{}: {}: {}",
+                    d.file, d.line, d.col, d.severity, d.message
+                );
             }
         }
     }
@@ -156,11 +179,11 @@ fn strict_checks(doc: &gdscript_parser::ParsedDocument) -> Vec<tower_lsp::lsp_ty
     let source = doc.source.as_bytes();
     let root = doc.tree.root_node();
 
-    for i in 0..root.child_count() {
+    for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         match node.kind() {
             "variable_statement" => {
-                let has_type = (0..node.child_count())
+                let has_type = (0..node.child_count() as u32)
                     .filter_map(|j| node.child(j))
                     .any(|n| n.kind() == "type");
                 if !has_type {
@@ -174,7 +197,7 @@ fn strict_checks(doc: &gdscript_parser::ParsedDocument) -> Vec<tower_lsp::lsp_ty
                 }
             }
             "function_definition" => {
-                let has_return_type = (0..node.child_count())
+                let has_return_type = (0..node.child_count() as u32)
                     .filter_map(|j| node.child(j))
                     .any(|n| n.kind() == "->");
                 if !has_return_type {
@@ -186,28 +209,29 @@ fn strict_checks(doc: &gdscript_parser::ParsedDocument) -> Vec<tower_lsp::lsp_ty
                     d.severity = Some(DiagnosticSeverity::WARNING);
                     out.push(d);
                 }
-                for j in 0..node.child_count() {
-                    let Some(params_node) = node.child(j) else { continue };
-                    if params_node.kind() != "parameters" { continue }
+                for j in 0..node.child_count() as u32 {
+                    let Some(params_node) = node.child(j) else {
+                        continue;
+                    };
+                    if params_node.kind() != "parameters" {
+                        continue;
+                    }
                     // Parameters node contains: `(`, identifier/typed_parameter, `,`, `)`
-                    for k in 0..params_node.child_count() {
-                        let Some(param) = params_node.child(k) else { continue };
-                        match param.kind() {
-                            "identifier" => {
-                                // Bare untyped parameter
-                                let name = param.utf8_text(source).unwrap_or("_");
-                                let mut d = error_diag(
-                                    node_range(&param),
-                                    "W0012",
-                                    format!("parameter `{name}` missing type annotation"),
-                                );
-                                d.severity = Some(DiagnosticSeverity::WARNING);
-                                out.push(d);
-                            }
-                            "typed_parameter" => {
-                                // `name: Type` — already typed, skip
-                            }
-                            _ => {}
+                    for k in 0..params_node.child_count() as u32 {
+                        let Some(param) = params_node.child(k) else {
+                            continue;
+                        };
+                        // `typed_parameter` ("name: Type") is already typed — nothing to warn about.
+                        if param.kind() == "identifier" {
+                            // Bare untyped parameter
+                            let name = param.utf8_text(source).unwrap_or("_");
+                            let mut d = error_diag(
+                                node_range(&param),
+                                "W0012",
+                                format!("parameter `{name}` missing type annotation"),
+                            );
+                            d.severity = Some(DiagnosticSeverity::WARNING);
+                            out.push(d);
                         }
                     }
                 }
@@ -292,7 +316,11 @@ mod tests {
         std::fs::write(&f3, "").unwrap();
         let files = collect_gd_files(&dir);
         assert_eq!(files.len(), 2, "should find both .gd files recursively");
-        assert!(!files.iter().any(|f| f.extension().and_then(|e| e.to_str()) != Some("gd")));
+        assert!(
+            !files
+                .iter()
+                .any(|f| f.extension().and_then(|e| e.to_str()) != Some("gd"))
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -325,8 +353,15 @@ mod tests {
             code: "E001".to_owned(),
             message: "some issue".to_owned(),
         };
-        let level = if d.severity == "error" { "error" } else { "warning" };
-        let line = format!("::{level} file={},line={},col={}::{}", d.file, d.line, d.col, d.message);
+        let level = if d.severity == "error" {
+            "error"
+        } else {
+            "warning"
+        };
+        let line = format!(
+            "::{level} file={},line={},col={}::{}",
+            d.file, d.line, d.col, d.message
+        );
         assert!(line.starts_with("::error "));
         assert!(line.contains("file=src/player.gd"));
         assert!(line.contains("line=10"));
@@ -364,6 +399,9 @@ mod tests {
         };
         let strict = false;
         let has_error = sev == "error" || (strict && sev == "warning");
-        assert!(!has_error, "non-strict mode: warning should not set has_error");
+        assert!(
+            !has_error,
+            "non-strict mode: warning should not set has_error"
+        );
     }
 }

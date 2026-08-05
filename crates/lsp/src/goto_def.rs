@@ -56,7 +56,7 @@ fn name_child_location(
     uri: &Url,
     target: &str,
 ) -> Option<Location> {
-    for i in 0..node.child_count() {
+    for i in 0..node.child_count() as u32 {
         let child = node.child(i)?;
         if child.kind() != "name" {
             continue;

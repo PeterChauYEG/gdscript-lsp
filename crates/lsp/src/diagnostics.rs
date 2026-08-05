@@ -9,14 +9,15 @@ use tokio::sync::RwLock;
 use tower_lsp::Client;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
 
-use gdscript_indexer::ProjectIndex;
 use crate::type_resolver::TypeMap;
+use gdscript_indexer::ProjectIndex;
 
 /// Parse `source`, extract syntax errors + lint warnings + `extra` diagnostics, and publish.
 ///
 /// `autoload_paths` — files registered as Godot autoloads. W0004 (missing
-/// class_name) is suppressed for these: Godot treats autoload names as global
-/// identifiers and refuses to compile scripts that re-declare them with class_name.
+/// `class_name`) is suppressed for these: Godot treats autoload names as global
+/// identifiers and refuses to compile scripts that re-declare them with `class_name`.
+#[allow(clippy::implicit_hasher)]
 pub async fn publish_diagnostics(
     client: &Client,
     uri: Url,
@@ -28,8 +29,7 @@ pub async fn publish_diagnostics(
     let file_path = uri.to_file_path().ok();
     let is_autoload = file_path
         .as_deref()
-        .map(|p| autoload_paths.contains(p))
-        .unwrap_or(false);
+        .is_some_and(|p| autoload_paths.contains(p));
 
     let mut diags: Vec<Diagnostic> = match parse(source) {
         Ok(doc) => {
@@ -44,8 +44,14 @@ pub async fn publish_diagnostics(
                 })
                 .map(|d| Diagnostic {
                     range: Range {
-                        start: Position { line: d.line, character: d.col },
-                        end: Position { line: d.end_line, character: d.end_col },
+                        start: Position {
+                            line: d.line,
+                            character: d.col,
+                        },
+                        end: Position {
+                            line: d.end_line,
+                            character: d.end_col,
+                        },
                     },
                     severity: Some(match d.severity {
                         Severity::Error => DiagnosticSeverity::ERROR,
@@ -67,6 +73,7 @@ pub async fn publish_diagnostics(
 }
 
 /// Compute diagnostics for a document without publishing (used by pull model).
+#[allow(clippy::implicit_hasher)]
 pub async fn compute_diagnostics(
     uri: &Url,
     source: &str,
@@ -83,8 +90,14 @@ pub async fn compute_diagnostics(
                 .chain(warnings)
                 .map(|d| Diagnostic {
                     range: Range {
-                        start: Position { line: d.line, character: d.col },
-                        end: Position { line: d.end_line, character: d.end_col },
+                        start: Position {
+                            line: d.line,
+                            character: d.col,
+                        },
+                        end: Position {
+                            line: d.end_line,
+                            character: d.end_col,
+                        },
                     },
                     severity: Some(match d.severity {
                         Severity::Error => DiagnosticSeverity::ERROR,
