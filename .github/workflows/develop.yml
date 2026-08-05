@@ -30,6 +30,15 @@ jobs:
       # avoid running it a second time here.
       enable_security_scan: false
 
+  actionlint:
+    uses: PeterChauYEG/labone-actions/.github/workflows/actionlint.yml@main
+    secrets: inherit
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      pr_url: ${{ github.event.pull_request.html_url }}
+
+  # --- repo-specific jobs below ---
+
   vscode-extension:
     name: vscode-extension
     runs-on: [self-hosted, catfood]
