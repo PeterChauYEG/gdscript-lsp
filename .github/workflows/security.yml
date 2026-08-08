@@ -10,11 +10,36 @@ on:
   schedule:
     - cron: '0 6 * * 1'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   trivy:
+    name: Trivy vulnerability & secret scan
+    # gdscript-lsp is public, and GitHub does not allow a public
+    # repository's workflow to call a reusable workflow defined in a
+    # private repository (PeterChauYEG/labone-actions is private) - the
+    # call fails at dispatch time with "workflow was not found" before any
+    # job is even created, regardless of the source repo's Actions access
+    # settings. So this scan is inlined here rather than delegating to
+    # labone-actions' security-scan.yml, unlike this org's private repos.
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]') ||
       (github.event_name == 'push' && github.event.head_commit.author.name != 'dependabot[bot]') ||
       (github.event_name != 'pull_request' && github.event_name != 'push')
-    uses: PeterChauYEG/labone-actions/.github/workflows/security-scan.yml@main
-    secrets: inherit
+    runs-on: [self-hosted, catfood]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: table
