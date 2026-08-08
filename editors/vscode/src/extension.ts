@@ -15,10 +15,10 @@ const CLIENT_NAME = 'GDScript LSP';
 
 let client: LanguageClient | undefined;
 let statusBar: vscode.StatusBarItem;
-let outputChannel: vscode.OutputChannel;
+let outputChannel: vscode.LogOutputChannel;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    outputChannel = vscode.window.createOutputChannel(CLIENT_NAME);
+    outputChannel = vscode.window.createOutputChannel(CLIENT_NAME, { log: true });
     context.subscriptions.push(outputChannel);
 
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
