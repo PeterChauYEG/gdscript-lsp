@@ -92,7 +92,7 @@ jobs:
             --title "chore: update extension_api.json (godot-headers@${SHORT})" \
             --body "Automated update from [godot-headers@${SHORT}](https://github.com/godotengine/godot-headers/commit/${{ steps.remote.outputs.sha }}) committed on ${DATE}.
 
-All tests pass against the new type DB." \
+          All tests pass against the new type DB." \
             --base main \
             --head "$BRANCH"
         env:
