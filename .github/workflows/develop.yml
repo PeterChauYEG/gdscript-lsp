@@ -12,32 +12,149 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_HOME: /home/github-runner/cargo-cache
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# gdscript-lsp is public, and GitHub does not allow a public repository's
+# workflow to call a reusable workflow defined in a private repository
+# (PeterChauYEG/labone-actions is private) - the call fails at dispatch
+# time with a "workflow file issue" before any job is even created,
+# regardless of the source repo's Actions access settings (security.yml
+# already documents/works around this same constraint for its Trivy scan).
+# The 2026-07-25 migration to `uses: labone-actions/.../develop-rust-ci.yml`
+# and `uses: labone-actions/.../actionlint.yml` violated this, which is why
+# every PR/push here got zero real CI checks from that date on. Reverted to
+# inline job definitions (as before that migration) until labone-actions is
+# made public or this repo goes private.
+
 jobs:
-  rust-ci:
-    uses: PeterChauYEG/labone-actions/.github/workflows/develop-rust-ci.yml@main
-    secrets: inherit
-    with:
-      pr_number: ${{ github.event.pull_request.number }}
-      pr_url: ${{ github.event.pull_request.html_url }}
-      is_dependabot: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
-      enable_dead_code: true
-      cargo_machete_version: '0.9.2'
-      # security.yml already runs the Trivy scan via security-scan.yml;
-      # avoid running it a second time here.
-      enable_security_scan: false
+  fmt:
+    name: fmt
+    runs-on: [self-hosted, catfood]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-  actionlint:
-    uses: PeterChauYEG/labone-actions/.github/workflows/actionlint.yml@main
-    secrets: inherit
-    with:
-      pr_number: ${{ github.event.pull_request.number }}
-      pr_url: ${{ github.event.pull_request.html_url }}
+      - name: cargo fmt
+        id: scan
+        continue-on-error: true
+        run: cargo fmt --check 2>&1 | tee fmt-report.txt
 
-  # --- repo-specific jobs below ---
+      - name: File Linear ticket for failure
+        if: steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/file-linear-ticket.sh fmt fmt-report.txt
+
+      - if: steps.scan.outcome == 'failure'
+        run: exit 1
+
+  clippy:
+    name: clippy
+    runs-on: [self-hosted, catfood]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: cargo clippy
+        id: scan
+        continue-on-error: true
+        run: cargo clippy -- -D warnings 2>&1 | tee clippy-report.txt
+
+      - name: File Linear ticket for failure
+        if: steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/file-linear-ticket.sh clippy clippy-report.txt
+
+      - if: steps.scan.outcome == 'failure'
+        run: exit 1
+
+  test:
+    name: test
+    runs-on: [self-hosted, catfood]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: cargo test
+        id: scan
+        continue-on-error: true
+        run: cargo test 2>&1 | tee test-report.txt
+
+      - name: File Linear ticket for failure
+        if: steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/file-linear-ticket.sh test test-report.txt
+
+      - if: steps.scan.outcome == 'failure'
+        run: exit 1
+
+  dead-code:
+    name: dead-code
+    runs-on: [self-hosted, catfood]
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Cache cargo-machete binary
+        uses: actions/cache@v4
+        with:
+          path: /home/github-runner/cargo-cache/bin/cargo-machete
+          key: ${{ runner.os }}-cargo-machete-0.9.2
+
+      - name: Install cargo-machete
+        run: command -v cargo-machete || cargo install cargo-machete --locked --version 0.9.2
+
+      - name: Run dead-code scan
+        id: scan
+        continue-on-error: true
+        run: ./scripts/dead-code-scan.sh
+
+      - name: Post PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        if: always() && github.event_name == 'pull_request'
+        with:
+          header: dead-code-scan
+          path: dead-code-report.md
+
+      - name: File Linear ticket for failure
+        if: steps.scan.outcome == 'failure' && github.event_name == 'pull_request'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/file-linear-ticket.sh dead-code dead-code-report.md
+
+      - name: Fail if unused dependencies were found
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
 
   vscode-extension:
     name: vscode-extension
@@ -69,7 +186,10 @@ jobs:
     runs-on: [self-hosted, catfood]
     if: always()
     needs:
-      - rust-ci
+      - fmt
+      - clippy
+      - test
+      - dead-code
       - vscode-extension
     steps:
       - name: Post a message in a channel
