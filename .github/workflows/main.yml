@@ -130,7 +130,7 @@ jobs:
           shasum -a 256 dist/gdscript-lsp-${{ matrix.name }} | awk '{print $1}' > dist/gdscript-lsp-${{ matrix.name }}.sha256
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.name }}
           path: dist/*
@@ -158,7 +158,7 @@ jobs:
           sha256sum dist/gdscript-lsp-linux-x86_64 | awk '{print $1}' > dist/gdscript-lsp-linux-x86_64.sha256
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-linux-x86_64
           path: dist/*
