@@ -22,7 +22,7 @@ jobs:
       CARGO_HOME: /home/github-runner/cargo-cache
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -36,7 +36,7 @@ jobs:
       CARGO_HOME: /home/github-runner/cargo-cache
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -50,7 +50,7 @@ jobs:
       CARGO_HOME: /home/github-runner/cargo-cache
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -66,7 +66,7 @@ jobs:
       tag: ${{ steps.calver.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -109,7 +109,7 @@ jobs:
             name: macos-arm64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -130,7 +130,7 @@ jobs:
           shasum -a 256 dist/gdscript-lsp-${{ matrix.name }} | awk '{print $1}' > dist/gdscript-lsp-${{ matrix.name }}.sha256
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.name }}
           path: dist/*
@@ -143,7 +143,7 @@ jobs:
       CARGO_HOME: /home/github-runner/cargo-cache
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -158,7 +158,7 @@ jobs:
           sha256sum dist/gdscript-lsp-linux-x86_64 | awk '{print $1}' > dist/gdscript-lsp-linux-x86_64.sha256
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-linux-x86_64
           path: dist/*
@@ -173,12 +173,12 @@ jobs:
       TAP_REPO_TOKEN: ${{ secrets.TAP_REPO_TOKEN }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: dist-*
           merge-multiple: true
@@ -235,7 +235,7 @@ jobs:
     steps:
       - name: Post a message in a channel
         if: ${{ env.SLACK_WEBHOOK_URL != '' }}
-        uses: slackapi/slack-github-action@v2.1.1
+        uses: slackapi/slack-github-action@v4.0.0
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         with:
