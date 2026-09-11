@@ -163,11 +163,21 @@ jobs:
           name: dist-linux-x86_64
           path: dist/*
 
+  required-checks:
+    name: required-checks
+    needs: [fmt, clippy, test, build-macos, build-linux]
+    runs-on: [self-hosted, catfood, catfood-minimal]
+    if: always()
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+
   release:
     name: release
     runs-on: [self-hosted, catfood]
-    if: github.event.head_commit.author.name != 'dependabot[bot]'
-    needs: [version, build-macos, build-linux]
+    if: github.event.head_commit.author.username != 'dependabot[bot]'
+    needs: [required-checks, version, build-macos, build-linux]
     env:
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
       TAP_REPO_TOKEN: ${{ secrets.TAP_REPO_TOKEN }}
