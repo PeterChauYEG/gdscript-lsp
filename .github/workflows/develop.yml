@@ -58,7 +58,7 @@ jobs:
   fmt:
     name: fmt
     needs: changes
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     if: ${{ needs.changes.outputs.rust == 'true' }}
     steps:
       - name: Checkout code
@@ -86,7 +86,7 @@ jobs:
   clippy:
     name: clippy
     needs: changes
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     if: ${{ needs.changes.outputs.rust == 'true' }}
     steps:
       - name: Checkout code
@@ -114,7 +114,7 @@ jobs:
   test:
     name: test
     needs: changes
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     if: ${{ needs.changes.outputs.rust == 'true' }}
     steps:
       - name: Checkout code
@@ -142,7 +142,7 @@ jobs:
   dead-code:
     name: dead-code
     needs: changes
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     if: ${{ needs.changes.outputs.rust == 'true' }}
     permissions:
       contents: read
@@ -190,7 +190,7 @@ jobs:
   vscode-extension:
     name: vscode-extension
     needs: changes
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-node]
     if: ${{ needs.changes.outputs.vscode == 'true' }}
     steps:
       - name: Checkout code
@@ -226,7 +226,7 @@ jobs:
         run: exit 1
 
   slack-notification:
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-minimal]
     if: always()
     needs:
       - fmt
