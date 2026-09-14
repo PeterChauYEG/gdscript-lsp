@@ -59,7 +59,6 @@ fn collect_symbols(
             type_annotation: None,
         });
 
-        // For class definitions, recurse into the body to extract member symbols.
         if matches!(kind, SymbolKind::Class) {
             if let Some(body) = node.child_by_field_name("body") {
                 collect_symbols(source, body, Some(&qualified_name), symbols);
@@ -108,13 +107,11 @@ func top_level():
         let doc = parse(src).unwrap();
         let syms = extract_symbols(&doc);
 
-        // The inner class itself should appear
         assert!(
             syms.iter()
                 .any(|s| s.name == "MyInner" && s.kind == SymbolKind::Class)
         );
 
-        // Inner class members should appear with qualified names
         assert!(
             syms.iter()
                 .any(|s| s.name == "MyInner.x" && s.kind == SymbolKind::Variable)
@@ -124,7 +121,6 @@ func top_level():
                 .any(|s| s.name == "MyInner.do_something" && s.kind == SymbolKind::Function)
         );
 
-        // Top-level function should still appear unqualified
         assert!(
             syms.iter()
                 .any(|s| s.name == "top_level" && s.kind == SymbolKind::Function)

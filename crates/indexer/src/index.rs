@@ -43,11 +43,9 @@ pub fn extract_extends(source: &str) -> Option<String> {
     for i in 0..root.child_count() as u32 {
         let Some(node) = root.child(i) else { continue };
         if node.kind() == "extends_statement" {
-            // First named child after `extends` keyword.
             for j in 0..node.child_count() as u32 {
                 let Some(child) = node.child(j) else { continue };
                 if child.kind() == "type" {
-                    // The type node contains an identifier.
                     for k in 0..child.child_count() as u32 {
                         let Some(ident) = child.child(k) else {
                             continue;
@@ -93,9 +91,6 @@ pub fn extract_class_name(source: &str) -> Option<String> {
 pub fn index_workspace(root: &Path) -> Result<ProjectIndex, IndexerError> {
     let mut index = ProjectIndex::new();
 
-    // Parse project.godot for autoloads and version.
-    // Use project.godot's parent as the res:// root — the workspace folder
-    // may differ from the Godot project root.
     if let Some(project_file) = crate::project_godot::find(root) {
         let project_root = project_file.parent().unwrap_or(root);
         if let Ok(content) = std::fs::read_to_string(&project_file) {

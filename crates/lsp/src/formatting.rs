@@ -53,7 +53,6 @@ fn diff_to_edits(old: &str, new: &str) -> Vec<TextEdit> {
                 old_line += 1;
             }
             ChangeTag::Delete => {
-                // Remove this line
                 edits.push(TextEdit {
                     range: Range {
                         start: Position {
@@ -70,7 +69,6 @@ fn diff_to_edits(old: &str, new: &str) -> Vec<TextEdit> {
                 old_line += 1;
             }
             ChangeTag::Insert => {
-                // Insert before the current old_line position
                 edits.push(TextEdit {
                     range: Range {
                         start: Position {
@@ -128,8 +126,6 @@ mod tests {
         assert!(!edits.is_empty());
     }
 
-    // --- format_document async path ---
-
     #[tokio::test]
     async fn binary_not_found_returns_none() {
         let result = format_document("var x = 1\n", "/nonexistent/gdformat").await;
@@ -138,7 +134,6 @@ mod tests {
 
     #[tokio::test]
     async fn binary_exits_nonzero_returns_none() {
-        // /bin/false always exits with code 1.
         let result = format_document("var x = 1\n", "/bin/false").await;
         assert!(result.is_none());
     }
@@ -163,7 +158,6 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fake_gdformat.sh");
-        // cat reads stdin and writes it back unchanged.
         std::fs::write(&script, "#!/bin/sh\ncat\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let src = "var x = 1\n";

@@ -101,7 +101,7 @@ mod tests {
         let doc = parse(src).unwrap();
         let loc = find_definition(&doc, &test_uri(), "my_func").unwrap();
         assert_eq!(loc.range.start.line, 0);
-        assert_eq!(loc.range.start.character, 5); // "func |my_func"
+        assert_eq!(loc.range.start.character, 5);
     }
 
     #[test]
@@ -145,7 +145,6 @@ mod tests {
 
     #[test]
     fn finds_local_variable_in_function_body() {
-        // Variable declared inside a function body is still discoverable by name.
         let src = "func _ready():\n\tvar speed = 100\n\tpass\n";
         let doc = parse(src).unwrap();
         let loc = find_definition(&doc, &test_uri(), "speed").unwrap();
@@ -154,24 +153,20 @@ mod tests {
 
     #[test]
     fn finds_local_variable_declared_before_use() {
-        // Simulates "go to definition" from a use site later in the same function.
-        // The definition of `count` is on line 1; the function continues on line 2.
         let src = "func run():\n\tvar count = 0\n\tcount += 1\n";
         let doc = parse(src).unwrap();
         let loc = find_definition(&doc, &test_uri(), "count").unwrap();
         assert_eq!(loc.range.start.line, 1);
-        // `count` starts at column 5: \t(0) v(1) a(2) r(3) (4) c(5)
         assert_eq!(loc.range.start.character, 5);
     }
 
     #[test]
     fn finds_function_defined_below_call_site() {
-        // A helper function defined after the function that calls it — still found.
         let src = "func _ready():\n\thelper()\n\nfunc helper():\n\tpass\n";
         let doc = parse(src).unwrap();
         let loc = find_definition(&doc, &test_uri(), "helper").unwrap();
         assert_eq!(loc.range.start.line, 3);
-        assert_eq!(loc.range.start.character, 5); // after "func "
+        assert_eq!(loc.range.start.character, 5);
     }
 
     #[test]

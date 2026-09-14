@@ -38,10 +38,7 @@ pub async fn publish_diagnostics(
             errors
                 .into_iter()
                 .chain(warnings)
-                .filter(|d| {
-                    // Autoload scripts must NOT declare class_name — suppress W0004 for them.
-                    !(is_autoload && d.code.as_deref() == Some("W0004"))
-                })
+                .filter(|d| !(is_autoload && d.code.as_deref() == Some("W0004")))
                 .map(|d| Diagnostic {
                     range: Range {
                         start: Position {
@@ -114,7 +111,6 @@ pub async fn compute_diagnostics(
         Err(_) => vec![],
     };
 
-    // Append type-check diagnostics from call checker.
     if let Ok(doc) = parse(source) {
         let db = api_db.read().await;
         if let Some(db) = db.as_ref() {

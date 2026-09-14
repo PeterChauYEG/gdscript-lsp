@@ -164,7 +164,6 @@ pub fn node_member_completions(
     scene_map: &std::collections::HashMap<String, String>,
     api_db: &ApiDb,
 ) -> Option<CompletionResponse> {
-    // Support simple paths: take the last component of `UI/HealthBar` → `HealthBar`.
     let simple = node_name.split('/').next_back().unwrap_or(node_name);
     let type_name = scene_map.get(simple)?;
     let mut fake_map = TypeMap::default();
@@ -207,7 +206,6 @@ mod tests {
         let mut map = TypeMap::default();
         map.types.insert("n".to_owned(), "Node2D".to_owned());
         let labels = item_labels(member_completions("n", &map, &db));
-        // Node2D inherits Node, which has add_child
         assert!(labels.iter().any(|l| l == "add_child"));
     }
 
@@ -270,7 +268,6 @@ mod tests {
         let mut scene = std::collections::HashMap::new();
         scene.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
         let labels = item_labels(node_member_completions("Sprite2D", &scene, &db));
-        // Sprite2D has position (inherited from Node2D)
         assert!(labels.iter().any(|l| l == "position" || l == "add_child"));
     }
 
@@ -285,7 +282,6 @@ mod tests {
     fn node_member_completions_last_path_component() {
         let db = db();
         let mut scene = std::collections::HashMap::new();
-        // Stores short name; path "UI/Health" → "Health"
         scene.insert("Health".to_owned(), "ProgressBar".to_owned());
         let labels = item_labels(node_member_completions("UI/Health", &scene, &db));
         assert!(!labels.is_empty());

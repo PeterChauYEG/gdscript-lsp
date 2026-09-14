@@ -26,7 +26,6 @@ pub fn types_compatible(expected: &str, actual: &str, api_db: &ApiDb) -> bool {
     if expected == "Variant" {
         return true;
     }
-    // Array[T] is compatible with plain Array (LAB-692)
     let base_expected = expected.split('[').next().unwrap_or(expected);
     let base_actual = actual.split('[').next().unwrap_or(actual);
     if base_expected == base_actual {
@@ -80,7 +79,6 @@ mod tests {
     fn literal_type(src: &str) -> Option<&'static str> {
         let doc = parse(src).unwrap();
         let root = doc.tree.root_node();
-        // The variable_statement's value is under the RHS — find it
         for i in 0..root.child_count() as u32 {
             let Some(stmt) = root.child(i) else { continue };
             if stmt.kind() != "variable_statement" {
@@ -134,7 +132,6 @@ mod tests {
         assert_eq!(literal_type("var x = foo()\n"), None);
     }
 
-    // types_compatible
     #[test]
     fn same_type_compatible() {
         let d = db();
@@ -162,14 +159,12 @@ mod tests {
     #[test]
     fn subclass_compatible() {
         let d = db();
-        // Node2D inherits Node — Node2D is a subclass of Node
         assert!(types_compatible("Node", "Node2D", &d));
     }
 
     #[test]
     fn array_generic_compatible_with_plain_array() {
         let d = db();
-        // Array[Node2D] is compatible with Array (LAB-692)
         assert!(types_compatible("Array", "Array[Node2D]", &d));
         assert!(types_compatible("Array[Node2D]", "Array", &d));
     }
@@ -180,7 +175,6 @@ mod tests {
         assert!(types_compatible("Array[int]", "Array[int]", &d));
     }
 
-    // LAB-693: Dictionary[K, V] generic type tracking
     #[test]
     fn dict_generic_compatible_with_plain_dict() {
         let d = db();
