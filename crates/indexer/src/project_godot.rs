@@ -26,7 +26,6 @@ pub fn parse(content: &str) -> ProjectConfig {
             continue;
         }
 
-        // Extract Godot version from config/features=PackedStringArray("4.x")
         if line.starts_with("config/features=") {
             if let Some(ver) = extract_version(line) {
                 config.godot_version = Some(ver);
@@ -60,19 +59,16 @@ pub fn find(start: &Path) -> Option<std::path::PathBuf> {
 fn parse_autoload_line(line: &str) -> Option<(String, String)> {
     let (name, value) = line.split_once('=')?;
     let name = name.trim().to_owned();
-    // Value is a quoted string, possibly prefixed with `*` (singleton marker)
     let value = value.trim().trim_matches('"');
     let path = value.trim_start_matches('*').to_owned();
     Some((name, path))
 }
 
 fn extract_version(line: &str) -> Option<String> {
-    // config/features=PackedStringArray("4.3", ...)
     let start = line.find('"')? + 1;
     let rest = &line[start..];
     let end = rest.find('"')?;
     let version_str = &rest[..end];
-    // Keep only major.minor
     let parts: Vec<&str> = version_str.split('.').take(2).collect();
     Some(parts.join("."))
 }
@@ -100,7 +96,6 @@ AudioBus="res://autoloads/audio_bus.gd"
         let cfg = parse(SAMPLE);
         let gm = cfg.autoloads.iter().find(|(n, _)| n == "GameManager");
         assert!(gm.is_some());
-        // Strips the leading `*`
         assert_eq!(gm.unwrap().1, "res://autoloads/game_manager.gd");
     }
 
@@ -123,7 +118,6 @@ AudioBus="res://autoloads/audio_bus.gd"
     fn version_minor_only() {
         let src = "config/features=PackedStringArray(\"4.2.2\")\n";
         let cfg = parse(src);
-        // Keeps only major.minor
         assert_eq!(cfg.godot_version.as_deref(), Some("4.2"));
     }
 

@@ -77,7 +77,6 @@ pub fn run(args: &CheckArgs) -> Result<()> {
 
         let type_map = gdscript_lsp::type_resolver::extract_types(&doc);
 
-        // Collect checker-crate diagnostics (syntax + lint) and convert to LSP
         let checker_diags = collect_checker_diags(&doc);
 
         let mut diags = checker_diags;
@@ -216,14 +215,11 @@ fn strict_checks(doc: &gdscript_parser::ParsedDocument) -> Vec<tower_lsp::lsp_ty
                     if params_node.kind() != "parameters" {
                         continue;
                     }
-                    // Parameters node contains: `(`, identifier/typed_parameter, `,`, `)`
                     for k in 0..params_node.child_count() as u32 {
                         let Some(param) = params_node.child(k) else {
                             continue;
                         };
-                        // `typed_parameter` ("name: Type") is already typed — nothing to warn about.
                         if param.kind() == "identifier" {
-                            // Bare untyped parameter
                             let name = param.utf8_text(source).unwrap_or("_");
                             let mut d = error_diag(
                                 node_range(&param),
@@ -301,8 +297,6 @@ mod tests {
         std::fs::remove_file(tmp).ok();
     }
 
-    // LAB-718: CLI exit code and output format coverage
-
     #[test]
     fn collect_gd_files_recursive_directory() {
         let dir = std::env::temp_dir().join("test_collect_dir");
@@ -326,7 +320,6 @@ mod tests {
 
     #[test]
     fn json_format_is_valid_json_array() {
-        // Build a diagnostic list and verify serde produces a valid JSON array.
         let diags: Vec<JsonDiag> = vec![JsonDiag {
             file: "a.gd".to_owned(),
             line: 1,
@@ -370,18 +363,14 @@ mod tests {
 
     #[test]
     fn strict_mode_has_error_flag_set_for_warnings() {
-        // Verify that when strict mode is on, a warning should set has_error.
-        // We can't call std::process::exit in tests, so we test the logic inline.
         let doc = parse("var x = 1\n");
         let diags = strict_checks(&doc);
-        // strict_checks produces a warning for untyped var
         assert!(!diags.is_empty());
         let sev = match diags[0].severity {
             Some(tower_lsp::lsp_types::DiagnosticSeverity::WARNING) => "warning",
             Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR) => "error",
             _ => "info",
         };
-        // With --strict, warnings become errors: simulate the has_error check.
         let strict = true;
         let has_error = sev == "error" || (strict && sev == "warning");
         assert!(has_error, "strict mode: warning should set has_error");

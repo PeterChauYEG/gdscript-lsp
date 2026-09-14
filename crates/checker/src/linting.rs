@@ -17,7 +17,6 @@ pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
     let mut has_class_name = false;
     let mut is_editor_plugin = false;
 
-    // Build a map of enum_name → Vec<variant_name> for exhaustiveness checks.
     let enum_map = collect_enum_definitions(&root, source);
 
     for i in 0..root.child_count() as u32 {
@@ -25,7 +24,6 @@ pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
         match node.kind() {
             "class_name_statement" => has_class_name = true,
             "extends_statement" => {
-                // Exempt EditorPlugin scripts — they're registered differently.
                 if let Ok(text) = node.utf8_text(source) {
                     if text.contains("EditorPlugin") {
                         is_editor_plugin = true;
@@ -67,7 +65,6 @@ fn collect_enum_definitions(
         if node.kind() != "enum_definition" {
             continue;
         }
-        // Named enum: `enum Dir { UP, DOWN }` — anonymous enums are ignored.
         let name_node = (0..node.child_count() as u32)
             .filter_map(|j| node.child(j))
             .find(|n| n.kind() == "name");
@@ -144,13 +141,11 @@ fn check_match_exhaustiveness(
         return;
     };
 
-    // Gather all pattern_section nodes.
     let sections: Vec<tree_sitter::Node> = (0..match_body.child_count() as u32)
         .filter_map(|i| match_body.child(i))
         .filter(|n| n.kind() == "pattern_section")
         .collect();
 
-    // If any pattern is a wildcard `_`, the match is exhaustive.
     let has_wildcard = sections.iter().any(|sec| {
         (0..sec.child_count() as u32)
             .filter_map(|i| sec.child(i))
@@ -163,7 +158,6 @@ fn check_match_exhaustiveness(
         return;
     }
 
-    // Collect all `EnumName.VARIANT` member-access patterns.
     let mut enum_name: Option<String> = None;
     let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -172,9 +166,7 @@ fn check_match_exhaustiveness(
             let Some(pattern) = sec.child(i) else {
                 continue;
             };
-            // A member access pattern looks like `identifier "." identifier`.
             if pattern.kind() == "attribute" || pattern.kind() == "member_access" {
-                // Try to extract `lhs.rhs` from the node text.
                 if let Ok(text) = pattern.utf8_text(source) {
                     if let Some(dot) = text.find('.') {
                         let lhs = &text[..dot];
@@ -334,7 +326,6 @@ fn check_unused_locals(body: &tree_sitter::Node, source: &[u8], out: &mut Vec<Di
         if name.starts_with('_') {
             continue;
         }
-        // Count `identifier` nodes (usages) — `name` nodes (declarations) are a different kind.
         if count_identifier_uses(body, source, name) == 0 {
             let start = decl.start_position();
             let end = decl.end_position();
@@ -401,8 +392,6 @@ mod tests {
         diags(src).into_iter().filter_map(|d| d.code).collect()
     }
 
-    // --- unused variables ---
-
     #[test]
     fn unused_local_var_warned() {
         let src = "func _ready():\n\tvar x: int = 5\n";
@@ -426,8 +415,6 @@ mod tests {
         let src = "func _ready():\n\tvar x: int = 1\n\tvar y: int = x\n\tprint(y)\n";
         assert!(!codes(src).contains(&"W0001".to_owned()));
     }
-
-    // --- missing return ---
 
     #[test]
     fn missing_return_on_non_void() {
@@ -455,12 +442,9 @@ mod tests {
 
     #[test]
     fn if_as_last_stmt_no_false_positive() {
-        // We can't prove branches are exhaustive, so we don't warn on if-as-last-stmt.
         let src = "func foo() -> int:\n\tif true:\n\t\treturn 1\n\telse:\n\t\treturn 2\n";
         assert!(!codes(src).contains(&"W0002".to_owned()));
     }
-
-    // --- unreachable code ---
 
     #[test]
     fn code_after_return_is_unreachable() {
@@ -480,8 +464,6 @@ mod tests {
         assert!(!codes(src).contains(&"W0003".to_owned()));
     }
 
-    // --- missing class_name ---
-
     #[test]
     fn missing_class_name_warned() {
         let src = "extends Node\nfunc _ready():\n\tpass\n";
@@ -499,8 +481,6 @@ mod tests {
         let src = "@tool\nextends EditorPlugin\nfunc _enter_tree():\n\tpass\n";
         assert!(!codes(src).contains(&"W0004".to_owned()));
     }
-
-    // --- match exhaustiveness (W0005) ---
 
     #[test]
     fn match_exhaustiveness_warns_when_variant_missing() {

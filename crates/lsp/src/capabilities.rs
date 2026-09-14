@@ -15,29 +15,29 @@ use tower_lsp::lsp_types::{
 pub fn semantic_token_types() -> Vec<tower_lsp::lsp_types::SemanticTokenType> {
     use tower_lsp::lsp_types::SemanticTokenType;
     vec![
-        SemanticTokenType::NAMESPACE,      // 0
-        SemanticTokenType::TYPE,           // 1
-        SemanticTokenType::CLASS,          // 2
-        SemanticTokenType::ENUM,           // 3
-        SemanticTokenType::INTERFACE,      // 4
-        SemanticTokenType::STRUCT,         // 5
-        SemanticTokenType::TYPE_PARAMETER, // 6
-        SemanticTokenType::PARAMETER,      // 7
-        SemanticTokenType::VARIABLE,       // 8
-        SemanticTokenType::PROPERTY,       // 9
-        SemanticTokenType::ENUM_MEMBER,    // 10
-        SemanticTokenType::EVENT,          // 11
-        SemanticTokenType::FUNCTION,       // 12
-        SemanticTokenType::METHOD,         // 13
-        SemanticTokenType::MACRO,          // 14
-        SemanticTokenType::KEYWORD,        // 15
-        SemanticTokenType::MODIFIER,       // 16
-        SemanticTokenType::COMMENT,        // 17
-        SemanticTokenType::STRING,         // 18
-        SemanticTokenType::NUMBER,         // 19
-        SemanticTokenType::REGEXP,         // 20
-        SemanticTokenType::OPERATOR,       // 21
-        SemanticTokenType::DECORATOR,      // 22
+        SemanticTokenType::NAMESPACE,
+        SemanticTokenType::TYPE,
+        SemanticTokenType::CLASS,
+        SemanticTokenType::ENUM,
+        SemanticTokenType::INTERFACE,
+        SemanticTokenType::STRUCT,
+        SemanticTokenType::TYPE_PARAMETER,
+        SemanticTokenType::PARAMETER,
+        SemanticTokenType::VARIABLE,
+        SemanticTokenType::PROPERTY,
+        SemanticTokenType::ENUM_MEMBER,
+        SemanticTokenType::EVENT,
+        SemanticTokenType::FUNCTION,
+        SemanticTokenType::METHOD,
+        SemanticTokenType::MACRO,
+        SemanticTokenType::KEYWORD,
+        SemanticTokenType::MODIFIER,
+        SemanticTokenType::COMMENT,
+        SemanticTokenType::STRING,
+        SemanticTokenType::NUMBER,
+        SemanticTokenType::REGEXP,
+        SemanticTokenType::OPERATOR,
+        SemanticTokenType::DECORATOR,
     ]
 }
 

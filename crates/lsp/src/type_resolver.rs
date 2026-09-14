@@ -55,7 +55,6 @@ fn extract_types_impl(
         let Some(node) = root.child(i) else { continue };
         match node.kind() {
             "extends_statement" => {
-                // The type node is the first named child (no field name in the grammar).
                 for i in 0..node.child_count() as u32 {
                     let Some(child) = node.child(i) else { continue };
                     if child.kind() == "type" {
@@ -68,7 +67,6 @@ fn extract_types_impl(
             }
             "variable_statement" | "const_statement" => {
                 extract_var_type(&node, source, &mut map.types);
-                // LAB-700: infer @onready var x = $NodePath type from scene map
                 if let Some(sm) = scene_map {
                     if has_annotation(&node, source, "onready") {
                         extract_onready_inferred_type(&node, source, sm, &mut map.types);
@@ -98,28 +96,22 @@ fn extract_onready_inferred_type(
     scene_map: &HashMap<String, String>,
     out: &mut HashMap<String, String>,
 ) {
-    // Only process variable_statement nodes (caller ensures @onready context).
     if node.kind() != "variable_statement" {
         return;
     }
-    // Skip if already has an explicit type annotation — extract_var_type handles that.
     if node.child_by_field_name("type").is_some() {
         return;
     }
-    // Get the variable name.
     let Some(name_node) = node.child_by_field_name("name") else {
         return;
     };
     let Ok(name) = name_node.utf8_text(source) else {
         return;
     };
-    // Already resolved by explicit annotation — don't overwrite.
     if out.contains_key(name) {
         return;
     }
-    // Find the RHS value (after `=`).
     let Some(rhs) = rhs_node(node) else { return };
-    // The RHS must be a get_node expression (e.g. `$Sprite2D`).
     if rhs.kind() != "get_node" {
         return;
     }
@@ -227,10 +219,7 @@ fn extract_body_var_types(
         let Some(child) = body.child(i) else { continue };
         if child.kind() == "variable_statement" {
             extract_var_type(&child, source, out);
-            // LAB-709: infer subscript element type for `var x = arr[0]` where arr: Array[T]
             infer_subscript_type(&child, source, out);
-            // LAB-694: if RHS is a lambda, extract its parameter types into the outer scope
-            // so that captured variable resolution can find them.
             extract_lambda_param_types(&child, source, out);
         }
     }
@@ -248,7 +237,6 @@ fn extract_lambda_param_types(
     if rhs.kind() != "lambda" {
         return;
     }
-    // Lambda params live in the `parameters` field.
     let Some(params) = rhs.child_by_field_name("parameters") else {
         return;
     };
@@ -291,7 +279,6 @@ fn infer_subscript_type(
     source: &[u8],
     out: &mut HashMap<String, String>,
 ) {
-    // Skip if already has an explicit type or was resolved above.
     let has_type = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .any(|n| n.kind() == "type");
@@ -309,11 +296,9 @@ fn infer_subscript_type(
     }
 
     let Some(rhs) = rhs_node(stmt) else { return };
-    // Subscript node: receiver "[" index "]"
     if rhs.kind() != "subscript" {
         return;
     }
-    // First named child of subscript is the receiver.
     let receiver_node = (0..rhs.child_count() as u32)
         .filter_map(|i| rhs.child(i))
         .find(tree_sitter::Node::is_named);
@@ -329,7 +314,6 @@ fn infer_subscript_type(
         return;
     };
 
-    // Extract element type from "Array[T]" or "Dictionary[K, V]" (last type arg).
     if let Some(element_type) = extract_generic_element_type(&collection_type) {
         out.insert(var_name.to_owned(), element_type);
     }
@@ -342,7 +326,6 @@ fn infer_subscript_type(
 pub fn extract_generic_element_type(type_name: &str) -> Option<String> {
     let open = type_name.find('[')?;
     let inner = type_name[open + 1..].trim_end_matches(']');
-    // For Dictionary[K, V], take the last comma-separated element.
     let element = inner.split(',').next_back()?.trim();
     if element.is_empty() {
         None
@@ -357,8 +340,6 @@ fn type_ident<'a>(type_node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a
             continue;
         };
         if child.is_named() {
-            // For generic/subscript types like Array[Node2D], return the full text
-            // so type checking and hover can show "Array[Node2D]".
             return child.utf8_text(source).ok();
         }
     }
@@ -397,7 +378,6 @@ pub fn resolve_dollar_path(
 /// # LAB-708 / F-1
 #[must_use]
 pub fn resolve_as_cast(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
-    // tree-sitter-gdscript uses binary_operator for `expr as Type`, not cast_expression.
     if node.kind() != "binary_operator" && node.kind() != "cast_expression" {
         return None;
     }
@@ -410,7 +390,6 @@ pub fn resolve_as_cast(node: &tree_sitter::Node, source: &[u8]) -> Option<String
             }
             continue;
         }
-        // First node after "as" — could be a "type" wrapper or a bare identifier.
         if child.kind() == "type" {
             return type_ident(&child, source).map(str::to_owned);
         }
@@ -436,15 +415,11 @@ pub fn resolve_ternary_type(
     if node.kind() != "if_expression" {
         return None;
     }
-    // tree-sitter-gdscript grammar for ternary:
-    //   if_expression: <value_if_true> "if" <condition> "else" <value_if_false>
-    // Named children (is_named == true, non-keyword) in order: true_branch, cond, false_branch.
     let named_children: Vec<tree_sitter::Node> = (0..node.child_count() as u32)
         .filter_map(|i| node.child(i))
         .filter(tree_sitter::Node::is_named)
         .collect();
 
-    // We expect at least 3 named children: true_expr, condition, false_expr.
     if named_children.len() < 3 {
         return None;
     }
@@ -457,7 +432,6 @@ pub fn resolve_ternary_type(
             let name = branch.utf8_text(source).ok()?;
             return type_map.resolve(name).map(str::to_owned);
         }
-        // For cast expressions nested in the branch, delegate.
         if branch.kind() == "cast_expression" {
             return resolve_as_cast(branch, source);
         }
@@ -520,8 +494,6 @@ mod tests {
         assert_eq!(map.resolve("label"), Some("Label"));
     }
 
-    // --- LAB-696: $NodePath type inference ---
-
     #[test]
     fn resolve_dollar_path_simple() {
         let mut scene_map = HashMap::new();
@@ -552,7 +524,6 @@ mod tests {
     fn resolve_dollar_path_no_dollar_prefix() {
         let mut scene_map = HashMap::new();
         scene_map.insert("Label".to_owned(), "Label".to_owned());
-        // Should still work when the caller already stripped the `$`.
         assert_eq!(
             resolve_dollar_path("Label", &scene_map),
             Some("Label".to_owned())
@@ -563,14 +534,11 @@ mod tests {
     fn resolve_percent_unique_name() {
         let mut scene_map = HashMap::new();
         scene_map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
-        // LAB-695: %NodeName unique-name shortcut resolves same as $NodeName
         assert_eq!(
             resolve_dollar_path("%Sprite2D", &scene_map),
             Some("Sprite2D".to_owned())
         );
     }
-
-    // --- LAB-700: @onready implied type annotation ---
 
     fn types_with_scene(src: &str, scene_map: &HashMap<String, String>) -> TypeMap {
         let doc = parse(src).unwrap();
@@ -587,11 +555,9 @@ mod tests {
 
     #[test]
     fn onready_with_explicit_type_not_overridden() {
-        // When an explicit type annotation is present, the scene_map is ignored.
         let mut scene_map = HashMap::new();
         scene_map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
         let map = types_with_scene("@onready var sprite: Sprite2D = $Sprite2D\n", &scene_map);
-        // Type comes from the explicit annotation, same result but via different path.
         assert_eq!(map.resolve("sprite"), Some("Sprite2D"));
     }
 
@@ -605,7 +571,6 @@ mod tests {
 
     #[test]
     fn onready_without_dollar_rhs_not_inferred() {
-        // Non-$NodePath RHS: no scene inference.
         let mut scene_map = HashMap::new();
         scene_map.insert("Node2D".to_owned(), "Node2D".to_owned());
         let map = types_with_scene("@onready var x = get_node(\"Foo\")\n", &scene_map);
@@ -617,22 +582,17 @@ mod tests {
 
     #[test]
     fn onready_not_present_no_inference() {
-        // Without @onready, unannotated vars stay unresolved.
         let mut scene_map = HashMap::new();
         scene_map.insert("Sprite2D".to_owned(), "Sprite2D".to_owned());
         let map = types_with_scene("var sprite = $Sprite2D\n", &scene_map);
         assert!(map.resolve("sprite").is_none());
     }
 
-    // --- LAB-692: Array[T] generic type tracking ---
-
     #[test]
     fn extracts_array_generic_type_annotation() {
         let map = types("var items: Array[Node2D]\n");
         assert_eq!(map.resolve("items"), Some("Array[Node2D]"));
     }
-
-    // --- LAB-708 / F-1: as cast type narrowing ---
 
     fn find_as_binary(node: tree_sitter::Node<'_>) -> Option<tree_sitter::Node<'_>> {
         if node.kind() == "binary_operator" || node.kind() == "cast_expression" {
@@ -674,8 +634,6 @@ mod tests {
         let root = doc.tree.root_node();
         assert!(resolve_as_cast(&root, doc.source.as_bytes()).is_none());
     }
-
-    // --- LAB-709: subscript access element type inference ---
 
     #[test]
     fn extract_generic_element_type_array() {

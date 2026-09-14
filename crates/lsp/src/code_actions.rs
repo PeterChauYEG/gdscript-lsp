@@ -24,13 +24,11 @@ pub fn code_actions_for(
 
         match code {
             "W0001" => {
-                // Unused variable — offer to remove the declaration line.
                 actions.push(CodeActionOrCommand::CodeAction(remove_var_action(
                     uri, source, diag,
                 )));
             }
             "W0002" => {
-                // Missing return — offer to append a bare `return`.
                 actions.push(CodeActionOrCommand::CodeAction(add_return_action(
                     uri, diag,
                 )));
@@ -39,7 +37,6 @@ pub fn code_actions_for(
         }
     }
 
-    // Offer "Add type annotation" for untyped vars with literal RHS at the range.
     if let Some(action) = add_type_annotation_action(uri, source, range, diagnostics) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
@@ -143,7 +140,6 @@ fn type_annotation_for_var(
     source: &[u8],
     uri: &Url,
 ) -> Option<CodeAction> {
-    // Skip if already typed
     let has_type = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .any(|n| n.kind() == "type");
@@ -151,13 +147,11 @@ fn type_annotation_for_var(
         return None;
     }
 
-    // Find name node
     let name_node = (0..stmt.child_count() as u32)
         .filter_map(|i| stmt.child(i))
         .find(|n| n.kind() == "name")?;
     let name = name_node.utf8_text(source).ok()?;
 
-    // Find RHS literal
     let mut after_eq = false;
     let value = (0..stmt.child_count() as u32).find_map(|i| {
         let child = stmt.child(i)?;
@@ -173,7 +167,6 @@ fn type_annotation_for_var(
 
     let type_name = infer_literal_type(&value)?;
 
-    // Insert `: TypeName` right after the name node
     let name_end = name_node.end_position();
     let insert_pos = Position {
         line: name_end.row as u32,
@@ -332,8 +325,6 @@ mod tests {
         assert!(!has_type_action);
     }
 
-    // --- diagnostic codes with no fix offered ---
-
     #[test]
     fn no_action_for_w0003_unreachable_code() {
         let src = "func foo():\n\treturn\n\tvar x = 1\n";
@@ -397,8 +388,6 @@ mod tests {
         assert!(!has_fix, "E0003 should not produce a quick-fix action");
     }
 
-    // --- multiple diagnostics on same line → multiple actions ---
-
     #[test]
     fn multiple_diags_produce_multiple_actions() {
         let src = "var x = 1\nfunc foo() -> int:\n\tvar y = 2\n";
@@ -423,8 +412,6 @@ mod tests {
             "expected at least two actions, got {fix_count}"
         );
     }
-
-    // --- add_return_action new_text content ---
 
     #[test]
     fn add_return_action_inserts_correct_text() {

@@ -1,7 +1,6 @@
 use gdscript_parser::ParsedDocument;
 use tower_lsp::lsp_types::{SemanticToken, SemanticTokens};
 
-// Token type indices matching capabilities::semantic_token_types().
 const TT_CLASS: u32 = 2;
 const TT_ENUM: u32 = 3;
 const TT_PARAMETER: u32 = 7;
@@ -59,14 +58,12 @@ fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u
             }
         }
         "lambda" => {
-            // Optional name (named lambda: `func my_lambda(x): ...`)
             if let Some(name) = node
                 .child_by_field_name("name")
                 .or_else(|| find_child_kind(node, "name"))
             {
                 push_node(&name, TT_FUNCTION, out);
             }
-            // Parameters are highlighted by the "parameters" branch below via recursion.
         }
         "parameters" => {
             for i in 0..node.child_count() as u32 {
@@ -129,9 +126,7 @@ fn collect_tokens(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<(u32, u
             {
                 push_node(&name, TT_ENUM, out);
             }
-            // Enumerators live inside enumerator_list { enumerator* }
             collect_enum_member_tokens(node, out);
-            // Don't recurse into enum body.
             return;
         }
         "identifier" => {
@@ -255,7 +250,6 @@ mod tests {
 
     #[test]
     fn lambda_parameter_gets_parameter_token() {
-        // LAB-694: lambda `func(x: int): ...` — x should get a parameter token.
         let src = "class_name T\nfunc _ready():\n\tvar f = func(x: int): return x\n";
         assert!(
             token_types_in(src).contains(&TT_PARAMETER),

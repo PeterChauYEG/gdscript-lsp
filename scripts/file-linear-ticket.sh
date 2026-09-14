@@ -1,24 +1,9 @@
 #!/usr/bin/env bash
-# file-linear-ticket.sh — file a Linear ticket for a failing CI quality job
-# (fmt, clippy, test), or comment on the existing open one for this PR + job
-# instead of creating a duplicate.
-#
-# Usage: file-linear-ticket.sh <job-name> <report-path>
-#
-# Required env vars:
-#   LINEAR_API_KEY       — Linear GraphQL API key (repo secret)
-#   GITHUB_REPOSITORY    — e.g. "PeterChauYEG/gdscript-lsp"
-#   PR_NUMBER             — pull request number
-#   PR_URL                — pull request HTML URL
-#   RUN_URL               — workflow run URL, for linking the latest failure
 set -euo pipefail
 
 job_name="$1"
 report_path="$2"
 
-# LAB team label IDs, from $HARNESS_DIR/configs/linear/linear-labels.json —
-# hardcoded here since the ops harness config isn't checked out on this repo's
-# GHA runner workspace.
 RUST_LABEL_ID="37adccdc-90c5-4bdf-a2ff-43447949dca6"
 CI_LABEL_ID="01f4906f-28d8-4ff9-b95c-a1d6de39d1ca"
 
@@ -34,7 +19,6 @@ if [[ -f "$report_path" ]]; then
   report_body=$(cat "$report_path")
 fi
 
-# ── Dedup: look for an already-open ticket with a matching title ───────────
 search_query=$(jq -n --arg title "$title" '{
   query: "query($title: String!) { issues(filter: { team: { key: { eq: \"LAB\" } }, state: { type: { nin: [\"completed\", \"cancelled\"] } }, title: { contains: $title } }, first: 1) { nodes { id identifier url } } }",
   variables: { title: $title }
@@ -60,7 +44,6 @@ if [[ -n "$existing_id" ]]; then
   exit 0
 fi
 
-# ── No existing ticket — resolve team + Backlog state, then create one ─────
 team_response=$(curl -s -X POST https://api.linear.app/graphql \
   -H "Authorization: $LINEAR_API_KEY" \
   -H "Content-Type: application/json" \

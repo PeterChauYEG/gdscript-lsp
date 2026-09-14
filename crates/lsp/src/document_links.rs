@@ -25,7 +25,6 @@ fn collect_links(
         let end = node.end_position();
 
         if let Ok(raw) = node.utf8_text(source) {
-            // Strip surrounding quotes.
             let inner = raw.trim_matches('"').trim_matches('\'');
             if let Some(rel) = inner.strip_prefix("res://") {
                 let abs = workspace_root.join(rel);
@@ -50,7 +49,7 @@ fn collect_links(
                 }
             }
         }
-        return; // Don't recurse into string children.
+        return;
     }
 
     for i in 0..node.child_count() as u32 {
