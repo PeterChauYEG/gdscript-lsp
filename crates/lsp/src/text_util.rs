@@ -15,7 +15,6 @@ pub fn word_at(source: &str, line: u32, character: u32) -> Option<&str> {
 
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
 
-    // The cursor may sit just past the last character of the word, so check col-1 too.
     let anchor = if target_col < bytes.len() && is_word(bytes[target_col]) {
         target_col
     } else if target_col > 0 && is_word(bytes[target_col - 1]) {
@@ -55,14 +54,11 @@ mod tests {
 
     #[test]
     fn cursor_just_past_word() {
-        // "Node2D " — cursor at index 6 (the space)
         assert_eq!(word_at("Node2D ", 0, 6), Some("Node2D"));
     }
 
     #[test]
     fn returns_left_word_when_cursor_on_space_after_word() {
-        // "a b" — cursor on the space at index 1; picks "a" (word to the left).
-        // This is the expected behaviour for completions where the cursor trails the word.
         assert_eq!(word_at("a b", 0, 1), Some("a"));
     }
 

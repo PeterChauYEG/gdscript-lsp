@@ -7,7 +7,7 @@ on:
 
 jobs:
   check-and-update:
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     permissions:
       contents: write
       pull-requests: write

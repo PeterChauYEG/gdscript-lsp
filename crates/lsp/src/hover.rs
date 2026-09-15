@@ -27,15 +27,12 @@ pub fn hover_at(
     type_map: &TypeMap,
     api_db: &ApiDb,
 ) -> Option<Hover> {
-    // Find the byte offset of `word` start on this line.
-    // Check whether there's a `.receiver` pattern before it.
     let word_start = find_word_start(line, char_pos);
 
     if let Some(dot_pos) = word_start
         .checked_sub(1)
         .filter(|&i| line.as_bytes().get(i) == Some(&b'.'))
     {
-        // Find the receiver identifier before the dot.
         let before_dot: String = line.chars().take(dot_pos).collect();
         let receiver = before_dot
             .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
@@ -43,7 +40,6 @@ pub fn hover_at(
             .filter(|s| !s.is_empty());
 
         if let Some(receiver) = receiver {
-            // Resolve receiver type: try type map, then direct class name.
             let type_name = type_map
                 .resolve(receiver)
                 .or_else(|| api_db.get_class(receiver).map(|c| c.name.as_str()));
@@ -55,7 +51,6 @@ pub fn hover_at(
             }
         }
     } else {
-        // Bare call — could be a method on self.
         if let Some(self_type) = type_map.self_type.as_deref() {
             if let Some(h) = hover_member(self_type, word, api_db) {
                 return Some(h);
@@ -63,7 +58,6 @@ pub fn hover_at(
         }
     }
 
-    // Fall back: class name hover.
     hover_class(word, api_db)
 }
 
@@ -168,7 +162,6 @@ fn find_word_start(line: &str, char_pos: usize) -> usize {
     while start > 0 && is_word(chars[start - 1]) {
         start -= 1;
     }
-    // Convert char index to byte offset.
     chars[..start].iter().collect::<String>().len()
 }
 
@@ -214,7 +207,6 @@ mod tests {
         let mut map = TypeMap::default();
         map.types.insert("n".to_owned(), "Node2D".to_owned());
         let line = "n.add_child(x)";
-        // char_pos points into "add_child"
         let text = hover_text("add_child", line, 6, &map, &db);
         assert!(text.contains("add_child"));
         assert!(text.contains("func"));
@@ -255,13 +247,10 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // --- additional coverage tests ---
-
     #[test]
     fn class_hover_shows_properties_section() {
         let db = db();
         let text = hover_text("Node2D", "Node2D", 3, &empty_map(), &db);
-        // Node2D has properties like `position`; the hover should list some.
         assert!(
             text.contains("Properties") || text.contains("position"),
             "expected property info in Node2D hover, got: {text}"
@@ -285,7 +274,6 @@ mod tests {
         map.types.insert("n".to_owned(), "Node2D".to_owned());
         let line = "n.add_child(x)";
         let text = hover_text("add_child", line, 6, &map, &db);
-        // The method signature is rendered as `func Class.method(...) -> ReturnType`
         assert!(
             text.contains("->"),
             "expected return type arrow in method hover, got: {text}"
@@ -299,7 +287,6 @@ mod tests {
         map.types.insert("n".to_owned(), "Node2D".to_owned());
         let line = "n.add_child(x)";
         let text = hover_text("add_child", line, 6, &map, &db);
-        // add_child takes a Node argument; the hover should show the parameter name/type.
         assert!(
             text.contains("Node") || text.contains(':'),
             "expected parameter info in add_child hover, got: {text}"
@@ -313,7 +300,6 @@ mod tests {
         map.types.insert("n".to_owned(), "Node2D".to_owned());
         let line = "n.position";
         let text = hover_text("position", line, 3, &map, &db);
-        // `position` is a Vector2 — the hover should show the type.
         assert!(
             text.contains("Vector2") || text.contains("var"),
             "expected type info in position hover, got: {text}"
@@ -323,7 +309,6 @@ mod tests {
     #[test]
     fn class_hover_node_shows_name() {
         let db = db();
-        // Node is the base class and should always be present in the API DB.
         let text = hover_text("Node", "Node", 2, &empty_map(), &db);
         assert!(text.contains("Node"), "class name should appear in hover");
     }
@@ -335,8 +320,6 @@ mod tests {
         map.types.insert("n".to_owned(), "Node2D".to_owned());
         let line = "n.add_child(x)";
         let text = hover_text("add_child", line, 6, &map, &db);
-        // The format is `func ClassName.method_name(...)`, so the class name
-        // (or one of its ancestors) should appear before the dot.
         assert!(
             text.contains("Node"),
             "expected class name in method hover signature, got: {text}"

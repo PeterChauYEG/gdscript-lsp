@@ -17,12 +17,10 @@ fn range_at(root: &tree_sitter::Node, pos: Position) -> SelectionRange {
         column: pos.character as usize,
     };
 
-    // Descend to the leaf node at the position.
     let mut node = root
         .descendant_for_point_range(ts_point, ts_point)
         .unwrap_or(*root);
 
-    // Walk up, building the nested chain.
     let mut chain: Vec<Range> = Vec::new();
     loop {
         chain.push(ts_range_to_lsp(&node));
@@ -32,7 +30,6 @@ fn range_at(root: &tree_sitter::Node, pos: Position) -> SelectionRange {
         }
     }
 
-    // Convert the chain (leaf-first) into nested SelectionRange (leaf innermost).
     chain
         .into_iter()
         .rev()
@@ -84,10 +81,9 @@ mod tests {
         let pos = Position {
             line: 0,
             character: 4,
-        }; // inside 'x'
+        };
         let ranges = selection_ranges(&doc, &[pos]);
         assert_eq!(ranges.len(), 1);
-        // Leaf range should be narrow (just the identifier).
         let sr = &ranges[0];
         assert!(
             sr.range.end.character > sr.range.start.character || sr.parent.is_some(),
@@ -120,9 +116,8 @@ mod tests {
         let pos = Position {
             line: 1,
             character: 5,
-        }; // inside 'x'
+        };
         let ranges = selection_ranges(&doc, &[pos]);
-        // The deepest range should have a parent (enclosing expression/statement).
         assert!(ranges[0].parent.is_some());
     }
 }

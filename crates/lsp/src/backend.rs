@@ -122,7 +122,6 @@ impl Backend {
 #[allow(clippy::too_many_lines)]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        // Prefer root_uri; fall back to first workspace folder.
         let root_path = params
             .root_uri
             .and_then(|u| u.to_file_path().ok())
@@ -221,8 +220,6 @@ impl LanguageServer for Backend {
                         .await;
                 }
 
-                // Ask the client to watch project files so we get notified
-                // via workspace/didChangeWatchedFiles.
                 let patterns = ["**/*.gd", "**/*.tscn", "**/project.godot"];
                 let watchers: Vec<FileSystemWatcher> = patterns
                     .iter()
@@ -273,9 +270,6 @@ impl LanguageServer for Backend {
             .await
             .open(uri.clone(), params.text_document.text);
 
-        // If workspace root was never set, try to infer it from this file by
-        // walking up to find project.godot. This handles clients that don't
-        // send root_uri / workspaceFolders in the initialize request.
         {
             let needs_root = self.workspace_root.read().await.is_none();
             if needs_root {
@@ -415,7 +409,6 @@ impl LanguageServer for Backend {
         let char_pos = pos.character as usize;
         let _before: String = line.chars().take(char_pos).collect();
 
-        // `$` or `%` trigger — show node names from the associated scene.
         if trigger == Some("$") || trigger == Some("%") {
             let script_path = uri.to_file_path().ok();
             let index = self.project_index.read().await;
@@ -428,11 +421,9 @@ impl LanguageServer for Backend {
         }
 
         if trigger == Some(".") {
-            // Walk back on the current line to find the identifier before `.`
             let char_pos_before_dot = char_pos.saturating_sub(1);
             let before_dot: String = line.chars().take(char_pos_before_dot).collect();
 
-            // Check for `$NodeName.` or `%NodeName.` pattern (LAB-695, LAB-696).
             let node_prefix_pos = before_dot.rfind('$').or_else(|| before_dot.rfind('%'));
             if let Some(prefix_pos) = node_prefix_pos {
                 let node_path: String = before_dot[prefix_pos + 1..]
@@ -471,8 +462,6 @@ impl LanguageServer for Backend {
             let empty = TypeMap::default();
             let type_map = type_maps.get(uri).unwrap_or(&empty);
 
-            // Resolve the receiver's type — type map → engine class → user
-            // class_name → autoload singleton.
             let index = self.project_index.read().await;
             let resolved_type = type_map
                 .resolve(receiver)
@@ -500,9 +489,6 @@ impl LanguageServer for Backend {
 
             let result = if let Some(ref type_name) = resolved_type {
                 if db.get_class(type_name).is_some() {
-                    // Engine type — full member completions.
-                    // For `self.`, also inject the current file's own symbols so
-                    // user-defined methods and signals appear alongside engine members.
                     let mut fake_map = TypeMap::default();
                     fake_map
                         .types
@@ -518,7 +504,6 @@ impl LanguageServer for Backend {
                     }
                     base
                 } else {
-                    // User class or autoload — show its file's symbols.
                     let result = user_class_completions(type_name, &index);
                     self.client
                         .log_message(
@@ -541,8 +526,6 @@ impl LanguageServer for Backend {
             return Ok(result);
         }
 
-        // No trigger — return class names + current file's own members +
-        // base-class engine members (GDScript: `self.` is implicit).
         let db = self.api_db.read().await;
         let type_maps = self.type_maps.read().await;
         let empty = TypeMap::default();
@@ -553,13 +536,11 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // All class names (engine + user + autoloads)
         let mut all = match class_name_completions(db, &index.class_names, &index.autoloads) {
             tower_lsp::lsp_types::CompletionResponse::Array(v) => v,
             tower_lsp::lsp_types::CompletionResponse::List(_) => vec![],
         };
 
-        // Current file's own symbols (methods, vars, signals, etc.)
         if let Ok(script_path) = uri.to_file_path() {
             if let Some(tower_lsp::lsp_types::CompletionResponse::Array(items)) =
                 user_class_completions_by_path(&script_path, &index)
@@ -574,7 +555,6 @@ impl LanguageServer for Backend {
             }
         }
 
-        // Base class engine members (implicit self)
         if let Some(self_type) = type_map.self_type.as_deref() {
             if let Some(tower_lsp::lsp_types::CompletionResponse::Array(items)) =
                 member_completions("self", type_map, db)
@@ -587,7 +567,7 @@ impl LanguageServer for Backend {
                     }
                 }
             }
-            let _ = self_type; // used above via type_map
+            let _ = self_type;
         }
 
         Ok(Some(tower_lsp::lsp_types::CompletionResponse::Array(all)))
@@ -606,12 +586,10 @@ impl LanguageServer for Backend {
         let line = lines.get(pos.line as usize).copied().unwrap_or("");
         let before = &line[..pos.character as usize];
 
-        // Parse `receiver.method(` pattern
         let Some((receiver, method)) = parse_call_context(before) else {
             return Ok(None);
         };
 
-        // Count commas to find active parameter
         let after_open = before.rfind('(').map_or("", |i| &before[i + 1..]);
         let active_param = after_open.chars().filter(|&c| c == ',').count() as u32;
 
@@ -624,7 +602,6 @@ impl LanguageServer for Backend {
         let empty = TypeMap::default();
         let type_map = type_maps.get(uri).unwrap_or(&empty);
 
-        // Handle direct class name (e.g. `Node2D.new(`)
         let result = if db.get_class(receiver).is_some() {
             let mut fake_map = TypeMap::default();
             fake_map
@@ -655,7 +632,6 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Check project index: class_name declarations and autoloads.
         let index = self.project_index.read().await;
         let index_path = index
             .class_names
@@ -671,7 +647,6 @@ impl LanguageServer for Backend {
         }
         drop(index);
 
-        // Fall back to same-file definition.
         let Ok(doc) = gdscript_parser::parse::parse(&source) else {
             return Ok(None);
         };
@@ -785,12 +760,9 @@ impl LanguageServer for Backend {
         };
         let word = word.to_owned();
 
-        // Build search corpus: indexed files on disk + all open documents
-        // (open docs take priority over disk — they may have unsaved changes).
         let index = self.project_index.read().await;
         let indexed_paths: Vec<std::path::PathBuf> = index.file_symbols.keys().cloned().collect();
 
-        // Collect open documents keyed by their URI.
         let open_docs: std::collections::HashMap<tower_lsp::lsp_types::Url, String> =
             documents.all();
         drop(index);
@@ -798,7 +770,6 @@ impl LanguageServer for Backend {
 
         let mut locations = Vec::new();
 
-        // Search indexed files, preferring in-memory content for open docs.
         for path in &indexed_paths {
             let Ok(file_uri) = tower_lsp::lsp_types::Url::from_file_path(path) else {
                 continue;
@@ -814,7 +785,6 @@ impl LanguageServer for Backend {
             search_word_in_text(&text, &word, &file_uri, &mut locations);
         }
 
-        // Also search any open document not in the index (e.g. new unsaved files).
         for (doc_uri, text) in &open_docs {
             let already_searched = doc_uri
                 .to_file_path()
@@ -882,7 +852,6 @@ impl LanguageServer for Backend {
         &self,
         params: tower_lsp::lsp_types::TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
-        // Refuse to rename GDScript keywords.
         const GDSCRIPT_KEYWORDS: &[&str] = &[
             "if",
             "elif",
@@ -935,7 +904,6 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        // Refuse to rename engine built-ins.
         let db = self.api_db.read().await;
         if let Some(db) = db.as_ref() {
             if db.get_class(word).is_some() {
@@ -943,13 +911,11 @@ impl LanguageServer for Backend {
             }
         }
 
-        // Find the byte range of the word on that line.
         let line_text = source
             .lines()
             .nth(params.position.line as usize)
             .unwrap_or("");
         let col = params.position.character as usize;
-        // Walk backwards from col to find where the word starts.
         let prefix: String = line_text.chars().take(col + 1).collect();
         let start_char = prefix
             .char_indices()
@@ -1050,7 +1016,6 @@ impl LanguageServer for Backend {
         }))
     }
 
-    // --- textDocument/typeDefinition (LAB-701) ---
     async fn goto_type_definition(
         &self,
         params: GotoTypeDefinitionParams,
@@ -1067,7 +1032,6 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Find the declared type of the symbol under cursor from the type map.
         let type_maps = self.type_maps.read().await;
         let type_name = type_maps
             .get(uri)
@@ -1103,7 +1067,6 @@ impl LanguageServer for Backend {
         })))
     }
 
-    // --- textDocument/implementation (LAB-702) ---
     async fn goto_implementation(
         &self,
         params: GotoImplementationParams,
@@ -1121,7 +1084,6 @@ impl LanguageServer for Backend {
         };
 
         let index = self.project_index.read().await;
-        // Find all scripts whose class_extends matches the queried class name.
         let locations: Vec<Location> = index
             .class_extends
             .iter()
@@ -1153,7 +1115,6 @@ impl LanguageServer for Backend {
         }
     }
 
-    // --- textDocument/documentLink (LAB-704) ---
     async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
         let uri = &params.text_document.uri;
         let source = self.documents.read().await.get(uri).map(str::to_owned);
@@ -1171,7 +1132,6 @@ impl LanguageServer for Backend {
         Ok(if links.is_empty() { None } else { Some(links) })
     }
 
-    // --- textDocument/selectionRange (LAB-705) ---
     async fn selection_range(
         &self,
         params: SelectionRangeParams,
@@ -1189,7 +1149,6 @@ impl LanguageServer for Backend {
         Ok(Some(ranges))
     }
 
-    // --- textDocument/semanticTokens/full ---
     async fn semantic_tokens_full(
         &self,
         params: SemanticTokensParams,
@@ -1207,7 +1166,6 @@ impl LanguageServer for Backend {
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
 
-    // --- callHierarchy (LAB-706) ---
     async fn prepare_call_hierarchy(
         &self,
         params: CallHierarchyPrepareParams,
@@ -1278,7 +1236,6 @@ impl LanguageServer for Backend {
                 continue;
             };
 
-            // Find each function in this file and check if its body calls target_name.
             for sym in symbols {
                 if sym.kind != gdscript_core::symbol::SymbolKind::Function {
                     continue;
@@ -1328,7 +1285,6 @@ impl LanguageServer for Backend {
         };
         let index = self.project_index.read().await;
 
-        // Collect all function names across the project for lookup.
         let known_functions: std::collections::HashMap<String, (tower_lsp::lsp_types::Url, u32)> =
             index
                 .file_symbols
@@ -1351,7 +1307,6 @@ impl LanguageServer for Backend {
         })
     }
 
-    // --- textDocument/diagnostic pull model (LAB-707) ---
     async fn diagnostic(
         &self,
         params: DocumentDiagnosticParams,
@@ -1449,7 +1404,6 @@ fn user_class_completions(
     use gdscript_core::symbol::SymbolKind;
     use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse};
 
-    // Try class_names first, then autoloads
     let path = index
         .class_names
         .get(class_name)
@@ -1558,7 +1512,6 @@ fn find_call_sites_in_source(source: &str, target_fn: &str, fn_start_line: u32) 
     let lines: Vec<&str> = source.lines().collect();
     let fn_start = fn_start_line as usize;
 
-    // Heuristic: the function body spans from fn_start until the next top-level function/class.
     let fn_end = lines
         .iter()
         .enumerate()

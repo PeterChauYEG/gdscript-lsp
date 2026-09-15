@@ -57,7 +57,6 @@ fn check_attribute_call(
     project_index: &ProjectIndex,
     out: &mut Vec<Diagnostic>,
 ) {
-    // Children: identifier(receiver) . attribute_call
     let mut receiver_name: Option<&str> = None;
     let mut call_node: Option<tree_sitter::Node> = None;
 
@@ -78,10 +77,6 @@ fn check_attribute_call(
         return;
     };
 
-    // --- Engine API path ---
-    // Resolve receiver to an engine class type (via type_map variable lookup or
-    // direct class-name lookup in the API db), then check the API db for the
-    // method signature.
     let engine_type_name = type_map
         .resolve(receiver)
         .or_else(|| api_db.get_class(receiver).map(|c| c.name.as_str()))
@@ -106,9 +101,6 @@ fn check_attribute_call(
         return;
     }
 
-    // --- Autoload path ---
-    // When the receiver is a known autoload singleton name, verify that the
-    // called member actually exists in that singleton's indexed file symbols.
     check_autoload_member(receiver, &call, source, project_index, out);
 }
 
@@ -128,7 +120,6 @@ fn check_autoload_member(
         return;
     };
 
-    // Extract the method/property identifier from the attribute_call node.
     let mut method_node: Option<tree_sitter::Node> = None;
     for i in 0..call.child_count() as u32 {
         let Some(child) = call.child(i) else { continue };
@@ -144,9 +135,6 @@ fn check_autoload_member(
         return;
     };
 
-    // A member is valid if any symbol in the autoload's file has the same name.
-    // We match by name only regardless of SymbolKind: a variable holding a
-    // Callable is a legitimate call target.  Kind-level checks are deferred.
     let member_exists = symbols.iter().any(|s| s.name == method_name);
 
     if !member_exists {
@@ -205,7 +193,6 @@ fn check_args(
     });
     let Some(method) = method else { return };
 
-    // Collect actual argument nodes (skip punctuation).
     let arg_nodes: Vec<tree_sitter::Node> = (0..args_node.child_count() as u32)
         .filter_map(|i| args_node.child(i))
         .filter(tree_sitter::Node::is_named)
@@ -214,7 +201,6 @@ fn check_args(
     let expected = method.arguments.len();
     let got = arg_nodes.len();
 
-    // Count required params (those without defaults).
     let required = method
         .arguments
         .iter()
@@ -238,7 +224,6 @@ fn check_args(
         return;
     }
 
-    // Type-check arguments where we can infer types from literals.
     for (i, (arg_node, param)) in arg_nodes.iter().zip(method.arguments.iter()).enumerate() {
         let inferred = infer_literal_type(arg_node);
         let Some(inferred) = inferred else { continue };
@@ -317,14 +302,12 @@ mod tests {
 
     #[test]
     fn correct_literal_no_diag() {
-        // set_visible(bool) — passing true is fine
         let src = "extends Node\nvar s: Sprite2D\nfunc _ready():\n\ts.set_visible(true)\n";
         assert!(diags(src).is_empty());
     }
 
     #[test]
     fn inherited_method_checked() {
-        // add_child is on Node, called on a Node2D (subclass) receiver
         let src = "extends Node\nvar n: Node2D\nfunc _ready():\n\tn.add_child(42)\n";
         let d = diags(src);
         assert!(!d.is_empty());
@@ -332,12 +315,9 @@ mod tests {
 
     #[test]
     fn vararg_method_not_flagged() {
-        // print() is vararg — any number of args is fine
         let src = "extends Node\nfunc _ready():\n\tprint(1, 2, 3, 4)\n";
         assert!(diags(src).is_empty());
     }
-
-    // --- Autoload member checks ---
 
     fn make_index(autoload_name: &str, path: &str, symbols: Vec<SymbolDef>) -> ProjectIndex {
         let mut index = ProjectIndex::new();
@@ -353,7 +333,6 @@ mod tests {
         let src = "func _ready():\n\tEventBus.nonexistent_method()\n";
         let doc = parse(src).unwrap();
         let type_map = extract_types(&doc);
-        // EventBus autoload exists but has no symbols at all.
         let index = make_index("EventBus", "/res/event_bus.gd", vec![]);
         let d = check_calls(&doc, &type_map, &db, &index);
         assert!(!d.is_empty(), "expected a diagnostic for unknown member");
@@ -384,26 +363,20 @@ mod tests {
 
     #[test]
     fn unknown_receiver_not_flagged() {
-        // A receiver that is neither an engine class nor an autoload should be
-        // silently skipped (no false positives for user-defined class instances).
         let src = "extends Node\nvar x: SomeUserClass\nfunc _ready():\n\tx.do_something()\n";
         assert!(diags(src).is_empty());
     }
 
     #[test]
     fn autoload_not_in_index_not_flagged() {
-        // If the autoload has no entry in file_symbols yet (e.g. still indexing),
-        // we should not emit spurious diagnostics.
         let db = db();
         let src = "func _ready():\n\tEventBus.emit_event()\n";
         let doc = parse(src).unwrap();
         let type_map = extract_types(&doc);
-        // Autoload registered but file_symbols not yet populated.
         let mut index = ProjectIndex::new();
         index
             .autoloads
             .insert("EventBus".to_owned(), PathBuf::from("/res/event_bus.gd"));
-        // file_symbols intentionally left empty.
         let d = check_calls(&doc, &type_map, &db, &index);
         assert!(d.is_empty(), "should not flag when symbols not indexed yet");
     }

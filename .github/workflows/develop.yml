@@ -32,9 +32,34 @@ concurrency:
 # made public or this repo goes private.
 
 jobs:
+  changes:
+    name: changes
+    runs-on: [self-hosted, catfood, catfood-minimal]
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      vscode: ${{ steps.filter.outputs.vscode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'scripts/**'
+            vscode:
+              - 'editors/vscode/**'
+
   fmt:
     name: fmt
-    runs-on: [self-hosted, catfood]
+    needs: changes
+    runs-on: [self-hosted, catfood, catfood-rust]
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -60,7 +85,9 @@ jobs:
 
   clippy:
     name: clippy
-    runs-on: [self-hosted, catfood]
+    needs: changes
+    runs-on: [self-hosted, catfood, catfood-rust]
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -86,7 +113,9 @@ jobs:
 
   test:
     name: test
-    runs-on: [self-hosted, catfood]
+    needs: changes
+    runs-on: [self-hosted, catfood, catfood-rust]
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -112,7 +141,9 @@ jobs:
 
   dead-code:
     name: dead-code
-    runs-on: [self-hosted, catfood]
+    needs: changes
+    runs-on: [self-hosted, catfood, catfood-rust]
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     permissions:
       contents: read
       pull-requests: write
@@ -158,7 +189,9 @@ jobs:
 
   vscode-extension:
     name: vscode-extension
-    runs-on: [self-hosted, catfood]
+    needs: changes
+    runs-on: [self-hosted, catfood, catfood-node]
+    if: ${{ needs.changes.outputs.vscode == 'true' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -182,8 +215,18 @@ jobs:
         working-directory: editors/vscode
         run: npm run compile
 
+  required-checks:
+    name: required-checks
+    needs: [changes, fmt, clippy, test, dead-code, vscode-extension]
+    runs-on: [self-hosted, catfood, catfood-minimal]
+    if: always()
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+
   slack-notification:
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-minimal]
     if: always()
     needs:
       - fmt

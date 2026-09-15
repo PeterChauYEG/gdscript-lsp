@@ -21,8 +21,6 @@ interface GitHubRelease {
     assets: GitHubAsset[];
 }
 
-// Maps a platform/arch pair to the asset name published on GitHub Releases.
-// The macOS x86_64 name matches the existing release pipeline's artifact naming.
 const PLATFORM_ASSET_NAMES: Record<string, string> = {
     'linux-x64': 'gdscript-lsp-linux-x86_64',
     'linux-arm64': 'gdscript-lsp-linux-arm64',

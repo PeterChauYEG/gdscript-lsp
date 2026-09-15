@@ -17,7 +17,7 @@ permissions:
 jobs:
   fmt:
     name: fmt
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     env:
       CARGO_HOME: /home/github-runner/cargo-cache
     steps:
@@ -31,7 +31,7 @@ jobs:
 
   clippy:
     name: clippy
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     env:
       CARGO_HOME: /home/github-runner/cargo-cache
     steps:
@@ -45,7 +45,7 @@ jobs:
 
   test:
     name: test
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     env:
       CARGO_HOME: /home/github-runner/cargo-cache
     steps:
@@ -59,7 +59,7 @@ jobs:
 
   version:
     name: version
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-minimal]
     needs: [fmt, clippy, test]
     outputs:
       version: ${{ steps.calver.outputs.version }}
@@ -137,7 +137,7 @@ jobs:
 
   build-linux:
     name: build (linux-x86_64)
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-rust]
     needs: [version]
     env:
       CARGO_HOME: /home/github-runner/cargo-cache
@@ -163,11 +163,21 @@ jobs:
           name: dist-linux-x86_64
           path: dist/*
 
+  required-checks:
+    name: required-checks
+    needs: [fmt, clippy, test, build-macos, build-linux]
+    runs-on: [self-hosted, catfood, catfood-minimal]
+    if: always()
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+
   release:
     name: release
-    runs-on: [self-hosted, catfood]
-    if: github.event.head_commit.author.name != 'dependabot[bot]'
-    needs: [version, build-macos, build-linux]
+    runs-on: [self-hosted, catfood, catfood-node]
+    if: github.event.head_commit.author.username != 'dependabot[bot]'
+    needs: [required-checks, version, build-macos, build-linux]
     env:
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
       TAP_REPO_TOKEN: ${{ secrets.TAP_REPO_TOKEN }}
@@ -228,7 +238,7 @@ jobs:
               '{event_type: "gdscript-lsp-release", client_payload: {version: $version, macos_x86_64_sha256: $macos_x86_64_sha256, macos_arm64_sha256: $macos_arm64_sha256, linux_x86_64_sha256: $linux_x86_64_sha256}}')"
 
   slack-notification:
-    runs-on: [self-hosted, catfood]
+    runs-on: [self-hosted, catfood, catfood-minimal]
     if: always()
     needs:
       - release

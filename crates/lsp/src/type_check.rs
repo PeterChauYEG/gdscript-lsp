@@ -16,7 +16,6 @@ pub fn check_type_mismatches(doc: &ParsedDocument, api_db: &ApiDb) -> Vec<Diagno
     let source = doc.source.as_bytes();
     let root = doc.tree.root_node();
 
-    // Collect declared types for reassignment checking.
     let declared_types = collect_declared_types(&root, source);
 
     for i in 0..root.child_count() as u32 {
@@ -108,7 +107,6 @@ fn check_reassignment(
         return;
     };
 
-    // LHS must be a bare identifier.
     let Some(lhs) = (0..assignment.child_count() as u32)
         .filter_map(|i| assignment.child(i))
         .find(|n| n.is_named() && n.kind() == "identifier")
@@ -124,7 +122,6 @@ fn check_reassignment(
         return;
     };
 
-    // RHS is the first named node after `=`.
     let mut after_eq = false;
     let rhs = (0..assignment.child_count() as u32).find_map(|i| {
         let child = assignment.child(i)?;
@@ -166,10 +163,6 @@ fn check_var_assignment(
     api_db: &ApiDb,
     out: &mut Vec<Diagnostic>,
 ) {
-    // @onready vars with an explicit type annotation: the RHS is evaluated at
-    // scene-tree ready time and is guaranteed non-null by the engine.  Mark them
-    // as non-null and skip null-safety warnings (none exist yet, but this guard
-    // ensures we never emit false positives for this pattern in the future).
     let _is_onready = has_decorator(stmt, source, "onready");
 
     let Some(declared) = declared_var_type(stmt, source) else {
@@ -180,8 +173,6 @@ fn check_var_assignment(
         return;
     };
 
-    // Node-path expressions and other non-literals are already silently skipped
-    // here because `infer_literal_type` returns `None` for them.
     let Some(inferred) = infer_literal_type(&value) else {
         return;
     };
@@ -231,7 +222,6 @@ fn check_returns_in_body(
                 check_return_value(&stmt, ret_type, source, api_db, out);
             }
             "if_statement" | "while_statement" | "for_statement" => {
-                // Direct body children.
                 for j in 0..stmt.child_count() as u32 {
                     let Some(child) = stmt.child(j) else { continue };
                     if child.kind() == "body" {
@@ -240,7 +230,6 @@ fn check_returns_in_body(
                 }
             }
             "match_statement" => {
-                // match_statement → match_body → pattern_section → body
                 for j in 0..stmt.child_count() as u32 {
                     let Some(match_body) = stmt.child(j) else {
                         continue;
@@ -278,7 +267,6 @@ fn check_return_value(
     api_db: &ApiDb,
     out: &mut Vec<Diagnostic>,
 ) {
-    // The return value is the first named child of the return statement.
     let value = (0..ret_stmt.child_count() as u32)
         .filter_map(|i| ret_stmt.child(i))
         .find(|n| n.is_named() && n.kind() != "return");
@@ -378,8 +366,6 @@ mod tests {
             .collect()
     }
 
-    // --- variable assignment ---
-
     #[test]
     fn string_to_int_is_error() {
         let src = "var x: int = \"hello\"\n";
@@ -416,8 +402,6 @@ mod tests {
         assert!(codes(src).is_empty());
     }
 
-    // --- return type ---
-
     #[test]
     fn wrong_return_literal() {
         let src = "func foo() -> int:\n\treturn \"oops\"\n";
@@ -444,8 +428,6 @@ mod tests {
         assert!(codes(src).contains(&"E0003".to_owned()));
     }
 
-    // --- reassignment ---
-
     #[test]
     fn reassignment_wrong_type_is_error() {
         let src = "var x: int = 1\nx = \"bad\"\n";
@@ -460,21 +442,15 @@ mod tests {
 
     #[test]
     fn reassignment_undeclared_var_no_diag() {
-        // No `var y: int` declaration — can't check, should be silent.
         let src = "y = \"bad\"\n";
         assert!(codes(src).is_empty());
     }
 
-    // --- non-literal RHS is silently skipped ---
-
     #[test]
     fn expression_rhs_is_silently_skipped() {
-        // Intentional: we don't infer types for non-literal RHS, so no E0003.
         let src = "var x: int = get_node(\"/root\")\n";
         assert!(codes(src).is_empty());
     }
-
-    // --- nested control flow ---
 
     #[test]
     fn return_in_nested_while_checked() {
@@ -494,8 +470,6 @@ mod tests {
         assert!(codes(src).is_empty());
     }
 
-    // --- multiple return statements ---
-
     #[test]
     fn multiple_returns_all_correct() {
         let src = "func foo(x: int) -> int:\n\tif x > 0:\n\t\treturn 1\n\treturn 0\n";
@@ -507,8 +481,6 @@ mod tests {
         let src = "func foo(x: int) -> int:\n\tif x > 0:\n\t\treturn \"bad\"\n\treturn 0\n";
         assert!(codes(src).contains(&"E0003".to_owned()));
     }
-
-    // --- @onready ---
 
     /// `@onready var sprite: Sprite2D = $Sprite2D` — the RHS is a node-path
     /// expression, not a literal.  `infer_literal_type` returns `None` for it,
@@ -528,15 +500,12 @@ mod tests {
         assert!(codes(src).contains(&"E0003".to_owned()));
     }
 
-    // --- LAB-711: ternary expression type inference ---
-
     /// Ternary `value if cond else other` — the result type is not inferred by
     /// `check_type_mismatches` (the RHS node kind is `if_expression`, not a
     /// literal). No false-positive diagnostic should be emitted.
     #[test]
     fn ternary_expr_no_false_positive() {
         let src = "var x: int = 1 if true else 0\n";
-        // Ternary result type is not inferred — should not produce a diagnostic.
         let db = db();
         let doc = gdscript_parser::parse::parse(src).unwrap();
         let diags = check_type_mismatches(&doc, &db);

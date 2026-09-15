@@ -30,7 +30,6 @@ fn collect_errors(cursor: &mut tree_sitter::TreeCursor<'_>, out: &mut Vec<Diagno
             code: Some("E0001".to_owned()),
             message: "Syntax error".to_owned(),
         });
-        // Don't descend into error nodes — children are just recovery fragments.
         return;
     }
 
@@ -80,7 +79,6 @@ mod tests {
 
     #[test]
     fn error_position_is_accurate() {
-        // The error is on the first line (row 0).
         let src = "func (\n";
         let doc = parse(src).unwrap();
         let errors = syntax_errors(&doc);
