@@ -13,3 +13,6 @@ gdscript-core = { path = "../core" }
 tree-sitter = { workspace = true }
 tree-sitter-gdscript = { workspace = true }
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+# cargo-dupes config — thresholds/excludes for the duplicate-code CI job
+# (scripts/duplicate-code-scan.sh). See LAB-898 / the "Duplicate-Code &
+# File-Size CI Job" Linear doc for why cargo-dupes (an AST-normalizing,
+# Rust-native duplicate detector) is the right tool here — jscpd has no
+# meaningful Rust tokenizer.
+#
+# Exceptions/thresholds live here, not in the CI job or the scan script,
+# per the "exceptions live in the tool's own config, not the CI job"
+# convention in that doc.
+#
+# Test code is excluded: this codebase's test suites are parameterized
+# fixture-style tests (many small `#[test]` functions asserting near-
+# identical shapes), which is expected/acceptable duplication, not the
+# copy-pasted production logic this gate is meant to catch.
+#
+# max_exact_percent is set just above this repo's current baseline
+# (~3.6% measured on non-test code at adoption time) so the gate gets
+# ratcheted down over time rather than starting red on day one.
+min_nodes = 15
+similarity_threshold = 0.85
+max_exact_percent = 5.0
+exclude_tests = true
+
+exclude = ["target"]
