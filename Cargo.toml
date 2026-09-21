@@ -67,3 +67,11 @@ tempfile = "3"
 strip = true
 lto = true
 codegen-units = 1
+
+# too_many_lines is allow-by-default (clippy::pedantic); the existing
+# `cargo clippy -- -D warnings` CI job makes this a blocking check once
+# opted in here (each member crate opts in via `[lints] workspace = true`).
+# Threshold lives in clippy.toml. See LAB-898 / the "Duplicate-Code &
+# File-Size CI Job" Linear doc.
+[workspace.lints.clippy]
+too_many_lines = "warn"
