@@ -75,3 +75,10 @@ codegen-units = 1
 # File-Size CI Job" Linear doc.
 [workspace.lints.clippy]
 too_many_lines = "warn"
+
+# print_stdout/print_stderr/dbg_macro: no-console-log equivalent -- bans
+# println!/print!/eprintln!/eprint! and dbg! from shipping. Members opt in
+# via `lints.workspace = true`.
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "warn"
