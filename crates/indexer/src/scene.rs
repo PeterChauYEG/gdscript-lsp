@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-/// Node tree extracted from a `.tscn` file: node name → Godot class name.
 pub type SceneNodeMap = HashMap<String, String>;
 
 /// Parse a `.tscn` file and extract the node-name → type mapping.

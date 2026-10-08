@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::Url;
 
-/// Stores the current text content of all open documents.
 #[derive(Debug, Default)]
 pub struct DocumentStore {
     documents: HashMap<Url, String>,

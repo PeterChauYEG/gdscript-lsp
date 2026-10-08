@@ -5,20 +5,13 @@ use gdscript_core::symbol::SymbolDef;
 
 use crate::error::IndexerError;
 
-/// Project-wide symbol index.
 #[derive(Debug, Default)]
 pub struct ProjectIndex {
-    /// Maps `class_name` declarations to the file that declares them.
     pub class_names: HashMap<String, PathBuf>,
-    /// Maps `class_name` → what it `extends` (direct parent only).
     pub class_extends: HashMap<String, String>,
-    /// Maps file paths to their top-level symbol declarations.
     pub file_symbols: HashMap<PathBuf, Vec<SymbolDef>>,
-    /// Autoloads from project.godot: singleton name → absolute script path.
     pub autoloads: HashMap<String, PathBuf>,
-    /// Godot version extracted from project.godot (e.g. "4.3").
     pub godot_version: Option<String>,
-    /// Scene node maps: scene path → (node name → Godot class).
     pub scenes: HashMap<PathBuf, crate::scene::SceneNodeMap>,
 }
 

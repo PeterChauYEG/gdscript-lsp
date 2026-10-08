@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use gdscript_parser::ParsedDocument;
 
-/// Annotation-based type map for a single `GDScript` file.
 #[derive(Debug, Default)]
 pub struct TypeMap {
     pub types: HashMap<String, String>,

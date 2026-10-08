@@ -1,9 +1,7 @@
 use std::path::Path;
 
-/// Parsed contents of a `project.godot` file.
 #[derive(Debug, Default)]
 pub struct ProjectConfig {
-    /// Autoload singletons: name → res:// path (without leading `*`)
     pub autoloads: Vec<(String, String)>,
     pub godot_version: Option<String>,
 }

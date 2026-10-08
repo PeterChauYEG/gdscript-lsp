@@ -64,7 +64,6 @@ pub struct Backend {
     api_db: Arc<RwLock<Option<ApiDb>>>,
     project_index: Arc<RwLock<ProjectIndex>>,
     workspace_root: Arc<RwLock<Option<std::path::PathBuf>>>,
-    /// Per-file type maps, rebuilt on every open/change.
     type_maps: Arc<RwLock<std::collections::HashMap<tower_lsp::lsp_types::Url, TypeMap>>>,
 }
 

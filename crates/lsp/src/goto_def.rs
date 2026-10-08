@@ -1,7 +1,6 @@
 use gdscript_parser::ParsedDocument;
 use tower_lsp::lsp_types::{Location, Position, Range, Url};
 
-/// Node kinds that introduce a named definition in `GDScript`.
 const DEFINITION_KINDS: &[&str] = &[
     "function_definition",
     "variable_statement",
