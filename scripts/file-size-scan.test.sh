@@ -42,7 +42,6 @@ fixture_dir="$(mktemp -d)"
 report_md="$(mktemp)"
 trap 'rm -rf "$fixture_dir" "$report_md"' EXIT
 
-# ── Test 1: all files under threshold — clean report, exit 0 ───────────────
 seq 1 5 > "$fixture_dir/small.rs"
 
 set +e
@@ -52,7 +51,6 @@ set -e
 [[ $status -eq 0 ]] && echo "PASS: exits 0 when nothing is oversized" || { echo "FAIL: expected exit 0, got $status"; fail=1; }
 assert_contains "$(cat "$report_md")" "No files exceed 10 lines" "renders a clean report"
 
-# ── Test 2: files over threshold — listed, sorted largest-first, non-.rs ignored ──
 seq 1 5 > "$fixture_dir/small.rs"
 seq 1 20 > "$fixture_dir/big.rs"
 seq 1 30 > "$fixture_dir/bigger.rs"
