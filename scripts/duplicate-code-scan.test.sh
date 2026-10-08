@@ -31,8 +31,6 @@ mock_bin="$(mktemp -d)"
 report_md="$(mktemp)"
 trap 'rm -rf "$mock_bin" "$report_md"' EXIT
 
-# Fake `cargo dupes {stats,report,check}` driven by env vars, so each test
-# case just points the mock at its own fixture output/exit code.
 cat > "$mock_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" != "dupes" ]]; then
@@ -51,7 +49,6 @@ esac
 EOF
 chmod +x "$mock_bin/cargo"
 
-# ── Test 1: clean scan (no duplicate groups) — exits 0, report says so ─────
 stats_clean="$mock_bin/stats-clean.json"
 cat > "$stats_clean" <<'JSON'
 {"total_code_units":4,"total_lines":100,"exact_duplicate_groups":0,"exact_duplicate_units":0,"near_duplicate_groups":0,"near_duplicate_units":0,"exact_duplicate_lines":0,"near_duplicate_lines":0,"exact_duplicate_percent":0.0,"near_duplicate_percent":0.0}
@@ -66,7 +63,6 @@ status=$?
 assert_contains "$output" "0 group(s)" "logs zero duplicate groups on a clean scan"
 assert_contains "$(cat "$report_md")" "No duplicate code blocks found" "renders a clean report"
 
-# ── Test 2: over-threshold scan — exits 1, report lists the clone details ──
 stats_dirty="$mock_bin/stats-dirty.json"
 cat > "$stats_dirty" <<'JSON'
 {"total_code_units":4,"total_lines":100,"exact_duplicate_groups":1,"exact_duplicate_units":2,"near_duplicate_groups":0,"near_duplicate_units":0,"exact_duplicate_lines":18,"near_duplicate_lines":0,"exact_duplicate_percent":18.0,"near_duplicate_percent":0.0}
@@ -86,7 +82,6 @@ report_content="$(cat "$report_md")"
 assert_contains "$report_content" "1 duplicate group(s) found" "renders the duplicate group count"
 assert_contains "$report_content" "crates/lsp/src/hover.rs" "renders the clone detail"
 
-# ── Test 3: cargo-dupes error (exit 2) also propagates ─────────────────────
 set +e
 output=$(PATH="$mock_bin:$PATH" DUPES_STATS_JSON="$stats_clean" DUPES_REPORT_TXT="$report_clean" DUPES_CHECK_EXIT=2 \
   bash "$script" "$report_md" 2>&1)
