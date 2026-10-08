@@ -10,7 +10,6 @@ struct ExtensionApi {
     classes: Vec<ClassDef>,
 }
 
-/// In-memory database of all Godot engine built-in classes.
 pub struct ApiDb {
     classes: HashMap<String, ClassDef>,
 }
