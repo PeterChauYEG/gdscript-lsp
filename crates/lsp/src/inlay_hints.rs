@@ -3,12 +3,9 @@ use tower_lsp::lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, Position, R
 
 use crate::type_util::infer_literal_type;
 
-/// Compute inlay type hints for untyped variable declarations with literal RHS,
-/// and implicit `-> void` on functions without a declared return type.
-///
-/// Shows `: int` after `var x = 5`, `: float` after `var y = 3.14`, etc.
-/// Skips declarations that already have an explicit type annotation.
-/// Shows ` -> void` after `func foo()` when no return type is declared.
+/// Compute inlay type hints for untyped variable declarations with literal
+/// RHS (e.g. `: int` after `var x = 5`) and implicit `-> void` on functions
+/// without a declared return type.
 #[must_use]
 pub fn inlay_hints(doc: &ParsedDocument, range: &Range) -> Vec<InlayHint> {
     let mut hints = Vec::new();
@@ -86,11 +83,8 @@ fn hint_for_var(stmt: &tree_sitter::Node, _source: &[u8], range: &Range, out: &m
     });
 }
 
-/// Emit a ` -> void` inlay hint for functions that have no declared return type.
-///
-/// The hint is placed right after the closing `)` of the parameter list so
-/// the reader can see the implicit return type without having to remember
-/// `GDScript`'s default.
+/// Emit a ` -> void` inlay hint for functions with no declared return type,
+/// placed right after the closing `)` of the parameter list.
 fn hint_for_func(
     func: &tree_sitter::Node,
     _source: &[u8],

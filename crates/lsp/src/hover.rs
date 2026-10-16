@@ -14,11 +14,8 @@ fn make_hover(md: String) -> Hover {
 }
 
 /// Build a hover response given the cursor position within a source line.
-///
-/// Checks (in order):
-/// 1. Method/property on a typed receiver (`receiver.member`)
-/// 2. Method/property on `self` (bare call in a typed script)
-/// 3. Class name
+/// Checks, in order: method/property on a typed receiver, method/property on
+/// `self`, then class name.
 #[must_use]
 pub fn hover_at(
     word: &str,

@@ -2,9 +2,8 @@ use gdscript_parser::ParsedDocument;
 use tower_lsp::lsp_types::{DocumentLink, Position, Range, Url};
 
 /// Find all `res://` string literals in a `GDScript` document and return them
-/// as [`DocumentLink`]s that resolve to absolute filesystem paths.
-///
-/// Only emits links for paths that exist on disk.
+/// as [`DocumentLink`]s that resolve to absolute filesystem paths. Only emits
+/// links for paths that exist on disk.
 #[must_use]
 pub fn document_links(doc: &ParsedDocument, workspace_root: &std::path::Path) -> Vec<DocumentLink> {
     let source = doc.source.as_bytes();

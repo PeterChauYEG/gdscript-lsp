@@ -1,10 +1,9 @@
 use gdscript_parser::ParsedDocument;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 
-/// Build nested selection ranges for each requested position.
-///
-/// For each position, finds the tightest AST node containing it, then builds
-/// a chain of parent ranges up to the root.
+/// Build nested selection ranges for each requested position by finding the
+/// tightest AST node containing it, then building a chain of parent ranges
+/// up to the root.
 #[must_use]
 pub fn selection_ranges(doc: &ParsedDocument, positions: &[Position]) -> Vec<SelectionRange> {
     let root = doc.tree.root_node();
