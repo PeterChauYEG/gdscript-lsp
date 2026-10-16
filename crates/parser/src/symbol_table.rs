@@ -14,10 +14,9 @@ pub fn extract_symbols(doc: &ParsedDocument) -> Vec<SymbolDef> {
     symbols
 }
 
-/// Recursively collect symbols from `parent`'s children.
-///
-/// `class_prefix` is `Some("ClassName")` when collecting inside an inner class body,
-/// causing member names to be qualified as `ClassName.member`.
+/// Recursively collect symbols from `parent`'s children. `class_prefix` is
+/// `Some("ClassName")` when collecting inside an inner class body, qualifying
+/// member names as `ClassName.member`.
 fn collect_symbols(
     source: &[u8],
     parent: Node<'_>,

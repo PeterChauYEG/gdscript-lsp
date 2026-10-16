@@ -7,7 +7,8 @@ use tokio::sync::RwLock;
 
 use crate::{ProjectIndex, error::IndexerError, index::index_workspace};
 
-/// Spawn a background task that watches `root` for `.gd` changes and updates `index`.
+/// Spawn a background task that watches `root` for `.gd` changes and updates
+/// `index`.
 ///
 /// # Errors
 ///

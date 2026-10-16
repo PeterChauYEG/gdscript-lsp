@@ -5,10 +5,9 @@ use tower_lsp::lsp_types::{
 
 use crate::type_resolver::TypeMap;
 
-/// Build a signature help response for a method call.
-///
-/// `receiver` is the object before `.`, `method_name` is the called method,
-/// `active_param` is the zero-based argument index the cursor is in.
+/// Build a signature help response for a method call. `receiver` is the
+/// object before `.`, `method_name` is the called method, and `active_param`
+/// is the zero-based argument index the cursor is in.
 #[must_use]
 pub fn signature_help_for_method(
     receiver: &str,

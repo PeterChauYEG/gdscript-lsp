@@ -12,11 +12,9 @@ use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Posit
 use crate::type_resolver::TypeMap;
 use gdscript_indexer::ProjectIndex;
 
-/// Parse `source`, extract syntax errors + lint warnings + `extra` diagnostics, and publish.
-///
-/// `autoload_paths` — files registered as Godot autoloads. W0004 (missing
-/// `class_name`) is suppressed for these: Godot treats autoload names as global
-/// identifiers and refuses to compile scripts that re-declare them with `class_name`.
+/// Parse `source`, extract syntax errors + lint warnings + `extra` diagnostics,
+/// and publish. `autoload_paths` are Godot autoloads, for which W0004 (missing
+/// `class_name`) is suppressed since Godot disallows re-declaring autoload names.
 #[allow(clippy::implicit_hasher)]
 pub async fn publish_diagnostics(
     client: &Client,

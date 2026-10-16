@@ -6,10 +6,9 @@ use tower_lsp::lsp_types::Diagnostic;
 
 use crate::type_util::{error_diag, infer_literal_type, node_range, types_compatible};
 
-/// Check type mismatches on variable assignments and return statements.
-///
-/// Only checks cases where both sides are statically known — declared type annotation
-/// on the left and a literal on the right. Expressions/variables are skipped.
+/// Check type mismatches on variable assignments and return statements. Only
+/// checks cases where both sides are statically known (annotated type on the
+/// left, literal on the right); expressions and variables are skipped.
 #[must_use]
 pub fn check_type_mismatches(doc: &ParsedDocument, api_db: &ApiDb) -> Vec<Diagnostic> {
     let mut out = Vec::new();
@@ -38,10 +37,8 @@ pub fn check_type_mismatches(doc: &ParsedDocument, api_db: &ApiDb) -> Vec<Diagno
 }
 
 /// Returns `true` if the given `variable_statement` node has a decorator child
-/// whose identifier matches `name` (e.g. `"onready"` for `@onready`).
-///
-/// The tree-sitter `GDScript` grammar represents `@onready` as a `decorator` node
-/// whose first named child is an `identifier` containing `"onready"`.
+/// matching `name` — e.g. `@onready` is represented as a `decorator` node whose
+/// first named child is an `identifier` containing `"onready"`.
 fn has_decorator(stmt: &tree_sitter::Node, source: &[u8], name: &str) -> bool {
     for i in 0..stmt.child_count() as u32 {
         let Some(child) = stmt.child(i) else { continue };
@@ -149,14 +146,9 @@ fn check_reassignment(
     }
 }
 
-/// Check `var x: Type = literal` for type mismatches.
-///
-/// When a variable is annotated with `@onready` and has an explicit type, the RHS
-/// is typically a node-path expression (`$Sprite2D`).  `infer_literal_type` already
-/// returns `None` for non-literals, so those are silently skipped.  The decorator
-/// check below is therefore not strictly required for correctness today, but it
-/// makes the intent explicit and future-proofs the function against null-safety
-/// warnings that might otherwise be emitted for `@onready` variables.
+/// Check `var x: Type = literal` for type mismatches. For `@onready` variables
+/// with an explicit type, the RHS is typically a node-path expression
+/// (`$Sprite2D`), which `infer_literal_type` already skips as a non-literal.
 fn check_var_assignment(
     stmt: &tree_sitter::Node,
     source: &[u8],

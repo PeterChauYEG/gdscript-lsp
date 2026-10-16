@@ -24,15 +24,9 @@ pub fn extract_types(doc: &ParsedDocument) -> TypeMap {
     extract_types_impl(doc, None)
 }
 
-/// Like [`extract_types`] but also infers types for `@onready` variables that
-/// have no explicit type annotation and a `$NodePath` initializer.
-///
-/// When a variable is declared as `@onready var sprite = $Sprite2D` (no `:
-/// Type` annotation), the type is looked up in `scene_map` using the last
-/// component of the node path. If found, the inferred type is stored in the
-/// returned [`TypeMap`] exactly like an explicitly annotated variable.
-///
-/// # LAB-700
+/// Like [`extract_types`] but also infers types for `@onready` variables with
+/// no explicit type annotation and a `$NodePath` initializer, by looking up
+/// the node path's last component in `scene_map`.
 #[must_use]
 #[allow(clippy::implicit_hasher)]
 pub fn extract_types_with_scene(
@@ -83,12 +77,8 @@ fn extract_types_impl(
 }
 
 /// For `@onready var sprite = $Sprite2D` (no explicit type annotation), infer
-/// the type from the scene map using the node path's last component.
-///
-/// Only fires when:
-/// - The statement has a `@onready` decorator.
-/// - There is no explicit `: Type` annotation.
-/// - The RHS is a `get_node` expression (starts with `$`).
+/// the type from the scene map using the node path's last component. Only
+/// fires when the statement has no explicit type and the RHS is a `$`-node path.
 fn extract_onready_inferred_type(
     node: &tree_sitter::Node,
     source: &[u8],
@@ -345,15 +335,9 @@ fn type_ident<'a>(type_node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a
     None
 }
 
-/// Resolve the Godot class name for a `$NodePath` or `%UniqueName` expression.
-///
-/// `node_text` is the raw source text of the expression (e.g. `"$Sprite2D"`,
-/// `"$UI/HealthBar"`, or `"%UniqueSprite"`). The leading `$` or `%` is stripped
-/// and the last path component is used as the lookup key in `scene_map`, which
-/// maps node names to their Godot class names. Returns `Some(class_name)` when
-/// found.
-///
-/// # LAB-695, LAB-696
+/// Resolve the Godot class name for a `$NodePath` or `%UniqueName` expression
+/// by stripping the leading `$`/`%` and looking up the last path component in
+/// `scene_map`. Returns `Some(class_name)` when found.
 #[must_use]
 #[allow(clippy::implicit_hasher)]
 pub fn resolve_dollar_path(
@@ -369,12 +353,8 @@ pub fn resolve_dollar_path(
 }
 
 /// Resolve the narrowed type produced by an `expr as TypeName` cast expression.
-///
-/// Returns `Some(type_name)` when `node` is a `cast_expression` node and its
-/// right-hand type child can be read from `source`. The returned string is the
+/// Returns `Some(type_name)` when `node` is a `cast_expression` node, as the
 /// bare identifier text of the target type (e.g. `"Sprite2D"`).
-///
-/// # LAB-708 / F-1
 #[must_use]
 pub fn resolve_as_cast(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
     if node.kind() != "binary_operator" && node.kind() != "cast_expression" {
@@ -399,12 +379,9 @@ pub fn resolve_as_cast(node: &tree_sitter::Node, source: &[u8]) -> Option<String
     None
 }
 
-/// Resolve the type of a ternary `x if cond else y` expression.
-///
-/// Returns `Some(type_name)` only when both branches resolve to the same type
-/// via `type_map`. When the branches differ or either is unknown, returns `None`.
-///
-/// # LAB-711 / F-4
+/// Resolve the type of a ternary `x if cond else y` expression. Returns
+/// `Some(type_name)` only when both branches resolve to the same type via
+/// `type_map`; otherwise returns `None`.
 #[must_use]
 pub fn resolve_ternary_type(
     node: &tree_sitter::Node,

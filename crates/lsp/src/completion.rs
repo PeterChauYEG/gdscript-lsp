@@ -6,10 +6,9 @@ use tower_lsp::lsp_types::{
 
 use crate::type_resolver::TypeMap;
 
-/// Build completion items for member access after `.`.
-///
-/// Resolves the receiver type from `type_map`, then returns all methods and
-/// properties from that class and every ancestor in the inheritance chain.
+/// Build completion items for member access after `.`. Resolves the receiver
+/// type from `type_map`, then returns all methods and properties from that
+/// class and every ancestor in the inheritance chain.
 #[must_use]
 pub fn member_completions(
     receiver: &str,

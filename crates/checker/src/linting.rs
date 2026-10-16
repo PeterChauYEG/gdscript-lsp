@@ -2,12 +2,9 @@ use gdscript_parser::ParsedDocument;
 
 use crate::diagnostics::{Diagnostic, Severity};
 
-/// Run all lint passes on a parsed document. Returns warnings for:
-/// - W0001: unused local variable
-/// - W0002: function with declared return type missing a return on some path
-/// - W0003: unreachable code after return/break/continue
-/// - W0004: file missing `class_name` declaration (plugin.gd exempt)
-/// - W0005: match statement missing enum variants (non-exhaustive)
+/// Run all lint passes on a parsed document (unused variables, missing
+/// returns, unreachable code, missing `class_name`, and non-exhaustive
+/// `match` statements) and return the resulting warnings.
 #[must_use]
 pub fn lint(doc: &ParsedDocument) -> Vec<Diagnostic> {
     let mut out = Vec::new();
@@ -120,13 +117,9 @@ fn lint_match_exhaustiveness_in_func(
     }
 }
 
-/// Check a single `match_statement` for missing enum variants.
-///
-/// Strategy: look at all `pattern_section` children. If any pattern is a bare
-/// `_` identifier (wildcard arm), the match is trivially exhaustive — skip.
-/// Otherwise, collect all patterns of the form `EnumName.VARIANT`. If they all
-/// share the same enum name AND that enum exists in `enum_map`, warn about any
-/// variants that are not covered.
+/// Check a single `match_statement` for missing enum variants. Skips matches
+/// with a wildcard `_` arm; otherwise collects `EnumName.VARIANT` patterns and
+/// warns about any variants of a known enum that aren't covered.
 fn check_match_exhaustiveness(
     match_stmt: &tree_sitter::Node,
     source: &[u8],
